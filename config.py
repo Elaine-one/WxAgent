@@ -1,34 +1,35 @@
-"""
-全局配置 — 从 .env 读取，所有模块从这里取配置
-"""
 import os
 from pathlib import Path
 
 import dotenv
 dotenv.load_dotenv()
 
-# 项目路径
 PROJECT_DIR = Path(__file__).parent
 SESSION_FILE = PROJECT_DIR / "session.json"
+DATA_DIR = PROJECT_DIR / "data"
 
-# 用户路径
 USER_HOME = os.path.expanduser("~")
 USER_DESKTOP = os.path.join(USER_HOME, "Desktop")
 
-# LLM 配置
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai").lower()
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o")
 
-# Agent 配置
-MAX_TOOL_ROUNDS = 5     # 每轮对话最多工具调用次数
-MAX_HISTORY = 20         # 每个用户保留最近消息数
+MAX_TOOL_ROUNDS = 5
+MAX_HISTORY = 20
 
-# 全局运行状态
+AGENT_BACKEND = os.getenv("AGENT_BACKEND", "legacy")
+
 running = True
 
-# System Prompt
+
+def ensure_data_dirs():
+    dirs = [DATA_DIR, DATA_DIR / "chroma", DATA_DIR / "debug"]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+
 SYSTEM_PROMPT = f"""你是一个通过微信与用户聊天的 AI 助手，运行在用户的个人电脑上。你可以访问本地文件系统。
 
 ## 用户环境信息
