@@ -1,0 +1,40 @@
+# 环境变量（含 API Key，勿提交）
+.env
+
+# 微信登录凭证（自动生成，勿提交）
+session.json
+
+# 文档（仅本地参考，不提交）
+docs/
+
+# Python 字节码
+__pycache__/
+*.py[cod]
+*.pyo
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+*.egg
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+*.tmp
+*.log
