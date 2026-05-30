@@ -17,6 +17,8 @@ class ToolResult:
     error: str | None = None
     requires_confirmation: bool = False
     confirmation_detail: dict | None = None
+    display: str = ""
+    artifact_path: str | None = None
 
 
 def to_openai_schema(tools: list[ToolDef]) -> list[dict]:

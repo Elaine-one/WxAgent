@@ -1,0 +1,136 @@
+model_router:
+  default: deepseek-chat
+  routes:
+    text:
+      model: deepseek-chat
+      provider: openai
+      base_url: https://api.deepseek.com/v1
+    vision:
+      model: gpt-4o
+      provider: openai
+      base_url: https://api.openai.com/v1
+  task_overrides:
+    planning:
+      model: claude-sonnet-4-6
+      provider: anthropic
+    code_execution:
+      model: deepseek-chat
+      provider: openai
+  rates:
+    deepseek-chat:
+      input: 0.28
+      output: 0.88
+    gpt-4o:
+      input: 2.50
+      output: 10.00
+    claude-sonnet-4-6:
+      input: 3.00
+      output: 15.00
+
+security:
+  dev_mode: false
+  risk_levels:
+    safe:
+      - dir
+      - ls
+      - type
+      - echo
+      - netstat
+      - systeminfo
+      - where
+      - python --version
+      - git status
+      - git log
+      - git diff
+      - tasklist
+      - whoami
+      - ipconfig
+      - ping
+    caution:
+      - pip install
+      - pip uninstall
+      - git push
+      - git fetch
+      - git pull
+      - git add
+      - git commit
+      - python -c
+      - python -m http.server
+      - npm install
+    dangerous:
+      - del
+      - rm
+      - rd
+      - rmdir
+      - taskkill
+      - kill
+      - shutdown
+      - restart
+      - reg
+      - format
+      - fdisk
+      - chkdsk
+      - sfc
+      - bcdedit
+      - net user
+      - wmic
+      - schtasks
+      - mshta
+      - certutil
+      - bitsadmin
+      - powershell -enc
+      - cmd /c
+  path_sandbox:
+    write_roots:
+      - workspace/
+      - workspace/output/
+      - workspace/temp/
+      - workspace/scripts/
+      - workspace/downloads/
+    read_roots:
+      - ./
+      - ~/Desktop
+      - ~/Downloads
+      - ~/Documents
+    denied_patterns:
+      - .ssh
+      - .gnupg
+      - .env
+      - AppData/Roaming/Microsoft
+      - NTUSER.DAT
+
+workspace:
+  dir: workspace
+  subdirs:
+    - downloads
+    - temp
+    - output
+    - scripts
+    - data
+  venv_packages:
+    basic:
+      - pandas
+      - numpy
+      - matplotlib
+      - openpyxl
+      - pdfplumber
+      - python-docx
+      - Pillow
+      - requests
+      - beautifulsoup4
+      - lxml
+      - chardet
+    full:
+      - faster-whisper
+      - paddleocr
+      - paddlepaddle
+      - ffmpeg-python
+      - yt-dlp
+
+limits:
+  max_llm_calls_per_task: 15
+  max_tokens_per_day: 500000
+  max_retries_per_step: 3
+  python_timeout_seconds: 30
+  python_max_output_bytes: 50000
+  shell_timeout_seconds: 30

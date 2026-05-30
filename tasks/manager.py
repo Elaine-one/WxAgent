@@ -1,0 +1,86 @@
+import threading
+import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class TaskStatus(Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class TaskInfo:
+    task_id: str
+    task_type: str
+    user_id: str
+    status: TaskStatus
+    params: dict
+    result: str = ""
+    error: str = ""
+    progress: float = 0.0
+    created_at: float = field(default_factory=time.time)
+
+
+class AsyncTaskManager:
+    def __init__(self):
+        self.io_pool = ThreadPoolExecutor(max_workers=8)
+        self.cpu_pool = ProcessPoolExecutor(max_workers=2)
+        self._tasks: dict[str, TaskInfo] = {}
+        self._futures: dict[str, Future] = {}
+        self._on_complete_callback: Callable | None = None
+        self._lock = threading.Lock()
+
+    def submit(self, task_type: str, params: dict, user_id: str,
+               func: Callable) -> str:
+        task_id = f"task_{int(time.time())}_{len(self._tasks)}"
+        info = TaskInfo(task_id=task_id, task_type=task_type,
+                       user_id=user_id, status=TaskStatus.QUEUED, params=params)
+        with self._lock:
+            self._tasks[task_id] = info
+
+        pool = self.cpu_pool if task_type in ("transcode", "ocr") else self.io_pool
+        future = pool.submit(self._run_task, task_id, func, params)
+        with self._lock:
+            self._futures[task_id] = future
+        return task_id
+
+    def _run_task(self, task_id: str, func: Callable, params: dict):
+        with self._lock:
+            self._tasks[task_id].status = TaskStatus.RUNNING
+        try:
+            result = func(**params)
+            with self._lock:
+                self._tasks[task_id].status = TaskStatus.COMPLETED
+                self._tasks[task_id].result = str(result)
+        except Exception as e:
+            with self._lock:
+                self._tasks[task_id].status = TaskStatus.FAILED
+                self._tasks[task_id].error = str(e)
+        if self._on_complete_callback:
+            self._on_complete_callback(task_id)
+
+    def query(self, task_id: str) -> TaskInfo | None:
+        return self._tasks.get(task_id)
+
+    def list_running(self) -> list[TaskInfo]:
+        with self._lock:
+            return [t for t in self._tasks.values()
+                    if t.status in (TaskStatus.QUEUED, TaskStatus.RUNNING)]
+
+    def cancel(self, task_id: str) -> bool:
+        with self._lock:
+            if task_id in self._futures and not self._futures[task_id].done():
+                cancelled = self._futures[task_id].cancel()
+                if cancelled:
+                    self._tasks[task_id].status = TaskStatus.CANCELLED
+                return cancelled
+        return False
+
+    def set_on_complete(self, callback: Callable):
+        self._on_complete_callback = callback
