@@ -5,6 +5,15 @@ import tools.file_tools
 import tools.system_tools
 import tools.code_tools
 import tools.web_tools
+import tools.batch_tools
+import tools.system_control
+import tools.media_tools
+import tools.disk_tools
+import tools.download_tools
+import tools.monitor_tools
+import tools.aria2_tools
+
+import scenes.executor
 
 ALL_TOOLS = ToolRegistry.get_all_defs()
 

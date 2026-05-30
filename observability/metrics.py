@@ -31,3 +31,25 @@ class CostTracker:
             "total_tokens": self.total_tokens,
             "estimated_usd": self.estimated_usd,
         }
+
+
+_cost_tracker: "CostTracker | None" = None
+
+
+def get_cost_tracker() -> "CostTracker":
+    global _cost_tracker
+    if _cost_tracker is None:
+        _cost_tracker = CostTracker()
+    return _cost_tracker
+
+
+def record_llm_call(model_name: str, input_tokens: int, output_tokens: int,
+                    state: dict | None = None) -> None:
+    tracker = get_cost_tracker()
+    tracker.record_call(model_name, input_tokens, output_tokens)
+    if state is not None:
+        cost = state.get("cost", {})
+        cost["llm_calls"] = tracker.llm_calls
+        cost["total_tokens"] = tracker.total_tokens
+        cost["estimated_usd"] = tracker.estimated_usd
+        state["cost"] = cost

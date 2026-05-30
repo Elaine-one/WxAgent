@@ -6,6 +6,8 @@ from typing import Optional
 
 import httpx
 
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 FIXED_AUTH_URL = "https://ilinkai.weixin.qq.com"
 ILINK_APP_ID = "bot"
 BOT_TYPE = "3"
@@ -73,6 +75,9 @@ class InboundMessage:
     text: str
     msg_id: int = 0
     create_time_ms: int = 0
+    msg_type: str = "text"
+    image_url: str = ""
+    image_media_ref: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -86,3 +91,59 @@ class SessionState:
 
 class SessionExpired(Exception):
     pass
+
+
+def download_image_as_base64(url: str, session: SessionState | None = None,
+                             media_ref: dict | None = None) -> str:
+    try:
+        if media_ref and media_ref.get("encrypt_query_param"):
+            eqp = media_ref["encrypt_query_param"]
+            download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
+            resp = httpx.get(download_url, timeout=15, follow_redirects=True)
+            resp.raise_for_status()
+            ciphertext = resp.content
+            aes_key_b64 = media_ref.get("aes_key", "")
+            if aes_key_b64:
+                aes_key_hex = base64.b64decode(aes_key_b64).decode()
+                aes_key_bytes = bytes.fromhex(aes_key_hex)
+                cipher = Cipher(algorithms.AES(aes_key_bytes), modes.ECB())
+                decryptor = cipher.decryptor()
+                plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+                pad_len = plaintext[-1]
+                if 0 < pad_len <= 16:
+                    plaintext = plaintext[:-pad_len]
+                b64 = base64.b64encode(plaintext).decode()
+                return f"data:image/jpeg;base64,{b64}"
+            else:
+                b64 = base64.b64encode(ciphertext).decode()
+                return f"data:image/jpeg;base64,{b64}"
+
+        if not url:
+            import logging
+            logging.getLogger(__name__).warning(
+                "图片下载跳过: url 为空且 media_ref 无 encrypt_query_param"
+            )
+            return ""
+
+        headers = {}
+        if session and "cdn.weixin" in url:
+            headers = _build_headers(token=session.token)
+        resp = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
+        resp.raise_for_status()
+        content_type = resp.headers.get("content-type", "image/jpeg")
+        if "/" in content_type:
+            mime = content_type.split(";")[0].strip()
+        else:
+            mime = "image/jpeg"
+        b64 = base64.b64encode(resp.content).decode()
+        return f"data:{mime};base64,{b64}"
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "图片下载失败 url=%s session=%s media_ref=%s: %s",
+            url[:120] if url else "(空)",
+            "有" if session else "无",
+            "有" if media_ref else "无",
+            e,
+        )
+        return ""

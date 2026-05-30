@@ -3,7 +3,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from config import WORKSPACE_DIR, VENV_PYTHON
+from config import WORKSPACE_DIR, VENV_PYTHON, PYTHON_TIMEOUT, PYTHON_MAX_OUTPUT
 from tools.base import ToolDef, ToolResult
 from tools.registry import ToolRegistry
 
@@ -11,7 +11,8 @@ ALLOWED_MODULES = {
     "pandas", "numpy", "matplotlib", "openpyxl", "csv", "json",
     "re", "math", "statistics", "datetime", "collections",
     "pdfplumber", "docx", "PIL", "io", "os", "pathlib",
-    "sys", "sqlalchemy", "requests", "bs4",
+    "sys", "sqlalchemy", "requests", "bs4", "httpx",
+    "base64", "hashlib", "urllib", "secrets",
 }
 
 DANGEROUS_ATTRS = {
@@ -73,19 +74,22 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
     try:
         result = subprocess.run(
             [str(VENV_PYTHON), str(script_path)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=PYTHON_TIMEOUT,
             cwd=str(WORKSPACE_DIR),
             encoding="utf-8", errors="replace",
         )
-        stdout = result.stdout[:50000]
-        stderr = result.stderr[:50000]
+        stdout = result.stdout[:PYTHON_MAX_OUTPUT]
+        stderr = result.stderr[:PYTHON_MAX_OUTPUT]
         if len(result.stdout) + len(result.stderr) > 100_000:
             trunc_note = "\n\n[输出已截断，超出 100KB 限制]"
             stdout = stdout[:45000] + trunc_note if len(stdout) >= 45000 else stdout
 
         if result.returncode != 0:
+            error_detail = stderr.strip() if stderr.strip() else f"退出码: {result.returncode}"
+            if stdout.strip():
+                error_detail = f"{stdout.strip()}\n--- 错误 ---\n{error_detail}"
             return ToolResult(success=False, content=stdout,
-                            error=stderr or f"退出码: {result.returncode}")
+                            error=f"代码执行失败，请根据错误信息修改代码后重试:\n{error_detail}")
 
         artifacts = sorted(
             (WORKSPACE_DIR / "output").glob("*"),
@@ -101,7 +105,7 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
             artifact_path=artifact_path,
         )
     except subprocess.TimeoutExpired:
-        return ToolResult(success=False, error="执行超时 (30秒)")
+        return ToolResult(success=False, error=f"执行超时 ({PYTHON_TIMEOUT}秒)，请优化代码或减少数据量后重试")
     except Exception as e:
         return ToolResult(success=False, error=str(e))
     finally:
@@ -111,11 +115,58 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
             pass
 
 
+BLOCKED_PACKAGES = {
+    "tensorflow", "torch", "keras", "theano", "cupy",
+    "paddlepaddle", "paddleocr", "faster-whisper",
+}
+
+
+def _install_package(package: str, state=None, user_id: str = "") -> ToolResult:
+    pkg_lower = package.lower().replace("-", "").replace("_", "")
+    for blocked in BLOCKED_PACKAGES:
+        if blocked.replace("-", "").replace("_", "") in pkg_lower:
+            return ToolResult(success=False, error=f"禁止安装 {package}：该包体积过大或需要特殊硬件，请联系管理员手动安装")
+
+    pip = WORKSPACE_DIR / ".venv" / "Scripts" / "pip.exe"
+    if not pip.exists():
+        return ToolResult(success=False, error="venv 不存在，请重启程序")
+
+    try:
+        result = subprocess.run(
+            [str(pip), "install", "--quiet", package],
+            capture_output=True, text=True, timeout=120,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            return ToolResult(success=False, error=f"安装失败: {result.stderr.strip()}")
+        return ToolResult(success=True, content=f"{package} 已安装到工作区 venv")
+    except subprocess.TimeoutExpired:
+        return ToolResult(success=False, error="安装超时 (120秒)，包可能过大")
+    except Exception as e:
+        return ToolResult(success=False, error=str(e))
+
+
+ToolRegistry.register(
+    ToolDef(
+        name="install_package",
+        description="在工作区虚拟环境中安装 Python 包。包仅安装到 workspace/.venv，不影响系统 Python。"
+                    "安装成功后可在 run_python 中使用。禁止安装大型包（如 tensorflow、torch）。",
+        parameters={
+            "package": {"type": "string", "description": "要安装的包名，如 'python-docx'、'httpx'"},
+        },
+        required=["package"],
+    ),
+    _install_package,
+)
+
+
 ToolRegistry.register(
     ToolDef(
         name="run_python",
-        description="执行 Python 代码并返回结果。支持 pandas/numpy/matplotlib 等。"
-                    "代码在 workspace/.venv 中执行，可读取用户文件，图表保存到 workspace/output/。",
+        description="执行 Python 代码并返回结果。支持 pandas/numpy/matplotlib/python-docx/Pillow/httpx 等。"
+                    "代码在 workspace/.venv 中执行，可读取用户文件，图表保存到 workspace/output/。"
+                    "如果代码执行失败，会返回错误信息，请根据错误修改代码后重新调用此工具。"
+                    "如果缺少某个包，先用 install_package 安装。",
         parameters={
             "code": {"type": "string", "description": "要执行的 Python 代码"},
         },

@@ -2,7 +2,7 @@ import json
 import logging
 
 from core.state import AgentState
-from llm.base import BaseLLM
+from observability.metrics import record_llm_call
 from tools.base import ToolDef
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ REFLECTOR_PROMPT = """评估任务执行状态，决定下一步。
 - replan: 需要调整后续步骤（如某步失败需改变策略）"""
 
 
-def reflector_node(state: AgentState, *, model: BaseLLM,
-                   session, tools: list[ToolDef], memory=None) -> AgentState:
+def reflector_node(state: AgentState, *, session, tools: list[ToolDef],
+                   memory=None, default_model=None, model_cache=None) -> AgentState:
     plan_lines = []
     icon_map = {"done": "✅", "failed": "❌", "running": "🔄", "pending": "⬜", "skipped": "⏭️"}
     for s in state["plan"]:
@@ -41,7 +41,16 @@ def reflector_node(state: AgentState, *, model: BaseLLM,
         total_steps=len(state["plan"]),
         last_result=f"{last_step['status']}: {last_step['description']}",
     )
+    model = default_model
+    if model_cache and "planning" in model_cache:
+        model = model_cache["planning"]
     resp = model.chat([{"role": "user", "content": prompt}])
+
+    input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
+    output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
+    model_name = getattr(model, 'primary', model).__class__.__name__ if hasattr(model, 'primary') else ""
+    record_llm_call(model_name, input_tokens, output_tokens, state)
+
     try:
         data = json.loads(resp.text)
         decision = data.get("decision", "all_done")
