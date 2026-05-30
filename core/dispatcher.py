@@ -1,5 +1,6 @@
 import logging
 import time
+from collections import OrderedDict
 
 import config
 from channel.client import InboundMessage, SessionState
@@ -11,15 +12,51 @@ logger = logging.getLogger(__name__)
 
 
 class Dispatcher:
+    MAX_SESSIONS = 100
+    SESSION_TTL_SECONDS = 3600 * 24
 
-    def __init__(self, graph, session: SessionState):
+    def __init__(self, graph, session: SessionState, memory=None):
         self.graph = graph
         self.session = session
-        self._sessions: dict[str, dict] = {}
+        self.memory = memory
+        self._sessions: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        self._setup_task_callback()
+
+    def _get_or_create_state(self, uid: str) -> dict:
+        now = time.time()
+        if uid in self._sessions:
+            ts, state = self._sessions.pop(uid)
+            self._sessions[uid] = (now, state)
+            return state
+        expired = [
+            k for k, (ts, _) in self._sessions.items()
+            if now - ts > self.SESSION_TTL_SECONDS
+        ]
+        for k in expired:
+            del self._sessions[k]
+        while len(self._sessions) >= self.MAX_SESSIONS:
+            self._sessions.popitem(last=False)
+        state = self._new_state(uid)
+        self._sessions[uid] = (now, state)
+        return state
+
+    def _save_state(self, uid: str, state: dict) -> None:
+        now = time.time()
+        self._sessions[uid] = (now, state)
 
     def handle_message(self, msg: InboundMessage) -> None:
         uid = msg.from_user_id
         configurable = {"configurable": {"thread_id": uid}}
+
+        image_urls = []
+        image_media_refs = []
+        if msg.msg_type == "image":
+            if msg.image_url:
+                image_urls = [msg.image_url]
+            if msg.image_media_ref:
+                image_media_refs = [msg.image_media_ref]
+            if not image_urls and image_media_refs:
+                logger.info("image_no_url_but_has_media_ref, will download via media_ref")
 
         try:
             snapshot = self.graph.get_state(configurable)
@@ -37,27 +74,36 @@ class Dispatcher:
                 logger.info("interrupt_resume", extra={"uid": uid, "user_input": msg.text[:80]})
                 result = self.graph.invoke(None, configurable)
             else:
-                if uid not in self._sessions:
-                    self._sessions[uid] = self._new_state(uid)
-                state = self._sessions[uid]
+                state = self._get_or_create_state(uid)
                 state["user_input"] = msg.text
+                state["msg_type"] = msg.msg_type
+                state["image_urls"] = image_urls
+                state["image_media_refs"] = image_media_refs
                 result = self.graph.invoke(state, configurable)
         else:
-            if uid in self._sessions:
-                state = self._sessions[uid]
-                if state.get("task_complete"):
-                    state = self._new_state(uid)
-                    self._sessions[uid] = state
-            else:
-                self._sessions[uid] = self._new_state(uid)
-                state = self._sessions[uid]
+            state = self._get_or_create_state(uid)
+            if state.get("task_complete"):
+                state = self._new_state(uid)
             state["user_input"] = msg.text
+            state["msg_type"] = msg.msg_type
+            state["image_urls"] = image_urls
+            state["image_media_refs"] = image_media_refs
             state["interrupted"] = bool(state.get("plan") and not state.get("task_complete"))
             logger.info("new_invocation", extra={"uid": uid, "user_input": msg.text[:80]})
             result = self.graph.invoke(state, configurable)
 
         if result is not None:
-            self._sessions[uid] = result
+            self._save_state(uid, result)
+
+            messages = result.get("messages", [])
+            if len(messages) > result.get("messages_window", 50):
+                if self.memory:
+                    try:
+                        compressed = self.memory.maybe_compress(messages, self._get_model())
+                        result["messages"] = compressed
+                        logger.info("messages_compressed", extra={"uid": uid, "before": len(messages), "after": len(compressed)})
+                    except Exception:
+                        pass
 
         if result and result.get("final_response"):
             self._send_bubbles(uid, result["final_response"])
@@ -65,6 +111,39 @@ class Dispatcher:
             detail = result["pending_confirmation"]
             confirm_text = self._format_confirmation(detail)
             send_message(self.session, uid, confirm_text)
+
+    def _get_model(self):
+        try:
+            from llm import create_llm
+            from config import LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+            return create_llm(LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL, LLM_MODEL)
+        except Exception:
+            return None
+
+    def _setup_task_callback(self):
+        try:
+            from tasks.manager import get_task_manager
+            tm = get_task_manager()
+
+            def on_complete(task_id: str):
+                info = tm.query(task_id)
+                if info is None:
+                    return
+                status = "完成" if info.status.value == "completed" else "失败"
+                msg = f"你的异步任务 [{info.task_type}] 已{status}。"
+                if info.status.value == "completed" and info.result:
+                    msg += f"\n结果: {info.result[:300]}"
+                elif info.error:
+                    msg += f"\n错误: {info.error[:200]}"
+                if self.session:
+                    try:
+                        send_message(self.session, info.user_id, msg)
+                    except Exception:
+                        pass
+
+            tm.set_on_complete(on_complete)
+        except Exception:
+            pass
 
     def _format_confirmation(self, detail: dict) -> str:
         confirm_type = detail.get("type", "confirm")
@@ -113,4 +192,7 @@ class Dispatcher:
             "user_preferences": {},
             "active_tools": [],
             "cost": {"llm_calls": 0, "total_tokens": 0, "estimated_usd": 0.0},
+            "image_urls": [],
+            "image_media_refs": [],
+            "image_description": "",
         }

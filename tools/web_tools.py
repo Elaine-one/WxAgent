@@ -1,33 +1,33 @@
 import httpx
 from bs4 import BeautifulSoup
 
+from security.data_border import get_consent_db
 from tools.base import ToolDef, ToolResult
 from tools.registry import ToolRegistry
 
-_cloud_consent_granted = False
 
-
-def _check_cloud_consent(service_name: str) -> ToolResult | None:
-    global _cloud_consent_granted
-    if _cloud_consent_granted:
+def _check_cloud_consent(service_name: str, user_id: str = "") -> ToolResult | None:
+    consent_db = get_consent_db()
+    if consent_db.has_consented(user_id, service_name):
         return None
-    return ToolResult(
-        success=False,
-        error=f"此操作会将查询内容发送到 {service_name}，是否继续？",
-        requires_confirmation=True,
-        confirmation_detail={
-            "type": "cloud_consent",
-            "message": f"此操作会将数据发送到云端服务 {service_name}，是否继续？后续同类操作不再提示。",
-        },
-    )
+    if consent_db.needs_prompt(user_id, service_name):
+        return ToolResult(
+            success=False,
+            error=f"此操作会将查询内容发送到 {service_name}，是否继续？",
+            requires_confirmation=True,
+            confirmation_detail={
+                "type": "cloud_consent",
+                "message": f"此操作会将数据发送到云端服务 {service_name}，是否继续？后续同类操作不再提示。",
+            },
+        )
+    return None
 
 
 def _web_search(query: str, max_results: int = 5, state=None, user_id: str = "") -> ToolResult:
-    global _cloud_consent_granted
-    consent = _check_cloud_consent("DuckDuckGo 搜索引擎")
+    consent = _check_cloud_consent("DuckDuckGo 搜索引擎", user_id)
     if consent is not None:
         return consent
-    _cloud_consent_granted = True
+    get_consent_db().record_consent(user_id, "DuckDuckGo 搜索引擎", True)
     try:
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:

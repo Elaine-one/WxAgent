@@ -1,8 +1,11 @@
 import logging
+import threading
+import time
 
 import config
+from channel.sender import send_message
 from core.state import AgentState
-from llm.base import BaseLLM
+from observability.metrics import record_llm_call
 from tools.base import ToolDef
 
 logger = logging.getLogger(__name__)
@@ -34,21 +37,22 @@ RESPOND_PROMPT = """你是个人电脑 AI 助手，通过微信与用户对话�
 PROGRESS_INTERVAL_SECONDS = 5
 
 
-async def respond_with_progress(stream, sender, session_id):
-    import asyncio
-    import time
-    last_send = time.time()
-    buffer = ""
-    async for chunk in stream:
-        buffer += chunk
-        if time.time() - last_send >= PROGRESS_INTERVAL_SECONDS:
-            sender.send_text(session_id, "⏳ 正在生成回复...")
-            last_send = time.time()
-    return buffer
+def _send_progress(session, user_id: str, stop: threading.Event):
+    time.sleep(5)
+    if stop.is_set():
+        return
+    try:
+        send_message(session, user_id, "⏳ 正在生成回复...")
+    except Exception:
+        pass
 
 
-def respond_node(state: AgentState, *, model: BaseLLM,
-                 session, tools: list[ToolDef], memory=None) -> AgentState:
+def respond_node(state: AgentState, *, session, tools: list[ToolDef],
+                 memory=None, default_model=None, model_cache=None) -> AgentState:
+    model = default_model
+    if model_cache and "text" in model_cache:
+        model = model_cache["text"]
+
     icon_map = {"done": "✅", "failed": "❌", "pending": "⬜", "skipped": "⏭️"}
     plan_lines = []
     for s in state["plan"]:
@@ -66,12 +70,60 @@ def respond_node(state: AgentState, *, model: BaseLLM,
         error_context=error_context,
         mobile_rules=MOBILE_ADAPTATION_RULE,
     )
+
+    context = ""
+    if memory:
+        try:
+            context = memory.build_context_prompt(state.get("user_id", ""), state.get("user_input", ""))
+        except Exception:
+            pass
+
+    full_prompt = f"[用户上下文]\n{context}\n\n{prompt}" if context else prompt
+
     messages = [
         {"role": "system", "content": config.SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
+        {"role": "user", "content": full_prompt},
     ]
-    resp = model.chat(messages)
+
+    stop_progress = threading.Event()
+    progress_thread = None
+    if session:
+        progress_thread = threading.Thread(
+            target=_send_progress,
+            args=(session, state["user_id"], stop_progress),
+            daemon=True,
+        )
+        progress_thread.start()
+
+    try:
+        resp = model.chat(messages)
+    finally:
+        stop_progress.set()
+        if progress_thread:
+            progress_thread.join(timeout=1)
+
+    input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
+    output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
+    model_name = getattr(model, 'primary', model).__class__.__name__ if hasattr(model, 'primary') else ""
+    record_llm_call(model_name, input_tokens, output_tokens, state)
+
     state["final_response"] = resp.text
     state["task_complete"] = True
     logger.info("respond_generated", extra={"response_len": len(resp.text)})
+
+    if memory:
+        try:
+            memory.store_conversation(
+                state["user_id"],
+                [{"role": "user", "content": state["user_input"]},
+                 {"role": "assistant", "content": resp.text}],
+            )
+            memory.learn_from_interaction(
+                state["user_id"],
+                state["user_input"],
+                resp.text,
+            )
+        except Exception:
+            pass
+
     return state

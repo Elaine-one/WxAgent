@@ -21,3 +21,15 @@ class LLMFallback:
     @property
     def stats(self) -> dict:
         return {"fallback_count": self._fallback_count}
+
+    def wrap_tool_call(self, calls, extra_fields=None):
+        try:
+            return self.primary.wrap_tool_call(calls, extra_fields)
+        except Exception:
+            return self.fallback.wrap_tool_call(calls, extra_fields)
+
+    def wrap_tool_result(self, call, content):
+        try:
+            return self.primary.wrap_tool_result(call, content)
+        except Exception:
+            return self.fallback.wrap_tool_result(call, content)

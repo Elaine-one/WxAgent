@@ -1,7 +1,7 @@
 import re
 import subprocess
 
-from config import WORKSPACE_DIR
+from config import WORKSPACE_DIR, SHELL_TIMEOUT
 from tools.base import ToolDef, ToolResult
 from tools.registry import ToolRegistry
 
@@ -40,7 +40,7 @@ def _run_shell(command: str, state=None, user_id: str = "") -> ToolResult:
     try:
         result = subprocess.run(
             command, shell=True, capture_output=True, text=True,
-            timeout=30, cwd=str(WORKSPACE_DIR),
+            timeout=SHELL_TIMEOUT, cwd=str(WORKSPACE_DIR),
             encoding="utf-8", errors="replace",
         )
         output = (result.stdout or "") + (result.stderr or "")
@@ -74,14 +74,16 @@ def _clipboard_read(state=None, user_id: str = "") -> ToolResult:
 def _get_active_window(state=None, user_id: str = "") -> ToolResult:
     try:
         script = (
+            '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; '
             '(Get-Process | Where-Object {$_.MainWindowTitle -ne ""} | '
             'Select-Object -First 5 MainWindowTitle).MainWindowTitle'
         )
         result = subprocess.run(
             ["powershell", "-Command", script],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, timeout=5,
         )
-        return ToolResult(success=True, content=result.stdout.strip())
+        content = result.stdout.decode("utf-8", errors="replace").strip()
+        return ToolResult(success=True, content=content)
     except Exception as e:
         return ToolResult(success=False, error=str(e))
 

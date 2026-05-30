@@ -2,7 +2,7 @@ import json
 import logging
 
 from core.state import AgentState
-from llm.base import BaseLLM
+from observability.metrics import record_llm_call
 from tools.base import ToolDef
 
 logger = logging.getLogger(__name__)
@@ -17,14 +17,23 @@ FIX_PROMPT = """工具执行失败，分析错误并给出修正方案。
 可用工具列表：
 {tool_list}
 
+修正策略参考（不限于此）:
+- 文件路径错误 → 用 search_files 搜索定位 → 重试
+- 依赖缺失 → 请求安装依赖 → 重试
+- 权限不足 → 尝试替代方案 → 提示用户
+- 参数错误 → 分析错误信息 → 修正参数
+- 资源被占用 → 释放资源或等待 → 重试
+- 网络超时 → 减小请求范围或重试
+- 编码/格式问题 → 尝试不同编码或格式
+
 回复 JSON:
 {{"analysis": "原因", "action": "fix_args"|"pip_install"|"give_up",
   "new_args": {{}} 或 null, "package_name": "包名" 或 null,
   "give_up_reason": "放弃原因" 或 null}}"""
 
 
-def self_heal_node(state: AgentState, *, model: BaseLLM,
-                   session, tools: list[ToolDef], memory=None) -> AgentState:
+def self_heal_node(state: AgentState, *, session, tools: list[ToolDef],
+                   memory=None, default_model=None, model_cache=None) -> AgentState:
     step_idx = state["current_step"]
     step = state["plan"][step_idx]
     current_retries = state["retry_counts"].get(step_idx, 0)
@@ -37,7 +46,16 @@ def self_heal_node(state: AgentState, *, model: BaseLLM,
         retry_count=current_retries + 1,
         tool_list="\n".join(tool_lines),
     )
+    model = default_model
+    if model_cache and "code_execution" in model_cache:
+        model = model_cache["code_execution"]
     resp = model.chat([{"role": "user", "content": prompt}])
+
+    input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
+    output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
+    model_name = getattr(model, 'primary', model).__class__.__name__ if hasattr(model, 'primary') else ""
+    record_llm_call(model_name, input_tokens, output_tokens, state)
+
     try:
         fix = json.loads(resp.text)
     except (json.JSONDecodeError, KeyError):

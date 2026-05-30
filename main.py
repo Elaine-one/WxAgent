@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import atexit
 import signal
 import sys
 import time
@@ -10,6 +11,8 @@ import channel
 import llm
 import tools
 from channel import SessionState, SessionExpired
+from channel.message import message_signature, merge_messages
+from core.agent_loop import agent_loop, do_login, interruptible_sleep
 
 
 def main():
@@ -25,7 +28,16 @@ def main():
 
     config.ensure_data_dirs()
     config.ensure_workspace()
-    init_phase3()
+    config.init_workspace_packages("basic")
+
+    try:
+        import jieba
+        jieba.initialize()
+    except Exception:
+        pass
+
+    phase3_ctx = init_phase3()
+    atexit.register(_cleanup, phase3_ctx)
 
     print(f"LLM: {config.LLM_PROVIDER} | 模型: {config.LLM_MODEL} | 工具: {len(tools.ALL_TOOLS)} 个")
     if config.LLM_PROVIDER == "openai":
@@ -39,17 +51,22 @@ def main():
     if config.AGENT_BACKEND == "langgraph":
         from core.graph import build_agent_graph
         from core.dispatcher import Dispatcher
-        _graph = build_agent_graph(model, None, tools.ALL_TOOLS)
-        _dispatcher = Dispatcher(_graph, None)
+        _graph = build_agent_graph(
+            model, None, tools.ALL_TOOLS,
+            memory_manager=phase3_ctx["memory"],
+        )
+        _dispatcher = Dispatcher(_graph, None, memory=phase3_ctx["memory"])
         _use_langgraph = True
         print(f"Agent 后端: LangGraph")
     else:
         _use_langgraph = False
         conversations: dict[str, list[dict]] = {}
+        from core.graph import _build_model_cache
+        phase3_ctx["model_cache"] = _build_model_cache(model, tools.ALL_TOOLS)
         print(f"Agent 后端: legacy")
 
     if args.dry_run:
-        _dry_run_loop(model, _use_langgraph, _dispatcher if _use_langgraph else None, conversations)
+        _dry_run_loop(model, _use_langgraph, _dispatcher if _use_langgraph else None, conversations, phase3_ctx)
         return
 
     state = channel.load_session(str(config.SESSION_FILE))
@@ -59,10 +76,14 @@ def main():
 
     if _use_langgraph:
         _dispatcher.session = state
-        _dispatcher.graph = build_agent_graph(model, state, tools.ALL_TOOLS)
 
     consecutive_errors = 0
     print("开始监听消息... (Ctrl+C 退出)\n")
+
+    pending_msgs: dict[str, list] = {}
+    last_msg_time: dict[str, float] = {}
+    last_processed: dict[str, tuple[str, float]] = {}
+    DEBOUNCE_DELAY = 3.0
 
     while config.running:
         try:
@@ -72,16 +93,19 @@ def main():
             state = do_login()
             if not _use_langgraph:
                 conversations.clear()
+            pending_msgs.clear()
+            last_msg_time.clear()
+            last_processed.clear()
             continue
         except Exception as e:
             consecutive_errors += 1
             print(f"\ngetUpdates 错误 ({consecutive_errors}/3): {e}")
             if consecutive_errors >= 3:
                 print("连续失败，等待 30s...")
-                _sleep(30)
+                interruptible_sleep(30)
                 consecutive_errors = 0
             else:
-                _sleep(2)
+                interruptible_sleep(2)
             continue
 
         consecutive_errors = 0
@@ -91,14 +115,39 @@ def main():
                 break
             uid = msg.from_user_id
             print(f"\n[{uid}] {msg.text[:100]}{'...' if len(msg.text) > 100 else ''}")
+            pending_msgs.setdefault(uid, []).append(msg)
+            last_msg_time[uid] = time.time()
+
+        now = time.time()
+        ready_uids = [
+            uid for uid, t in last_msg_time.items()
+            if now - t >= DEBOUNCE_DELAY and uid in pending_msgs
+        ]
+
+        for uid in ready_uids:
+            batch = pending_msgs.pop(uid)
+            del last_msg_time[uid]
+
+            if not batch:
+                continue
+
+            merged_msg = merge_messages(batch)
+
+            msg_sig = message_signature(merged_msg)
+            prev_sig, _ = last_processed.get(uid, ("", 0))
+            if msg_sig and msg_sig == prev_sig:
+                print(f"  ⏭ 重复消息，跳过")
+                continue
+            if msg_sig:
+                last_processed[uid] = (msg_sig, now)
 
             try:
                 if _use_langgraph:
-                    _dispatcher.handle_message(msg)
+                    _dispatcher.handle_message(merged_msg)
                     channel.save_session(state, str(config.SESSION_FILE))
                     print(f"  → LangGraph 已处理")
                 else:
-                    reply = _agent_loop(model, uid, msg.text, conversations, state)
+                    reply = agent_loop(model, uid, merged_msg, conversations, state, phase3_ctx)
                     if reply:
                         channel.send_message(state, uid, reply)
                         channel.save_session(state, str(config.SESSION_FILE))
@@ -111,20 +160,65 @@ def main():
                 except Exception:
                     pass
 
+        stale = [uid for uid, (_, t) in last_processed.items() if now - t > 60]
+        for uid in stale:
+            del last_processed[uid]
+
+        if not msgs and not ready_uids:
+            interruptible_sleep(0.3)
+
     print("\n已退出")
 
 
 def init_phase3():
     from security.audit import AuditLogger
     from memory.manager import MemoryManager
-    from tasks.manager import AsyncTaskManager
+    from memory.indexer import BackgroundIndexer
+    from tasks.manager import get_task_manager
 
-    AuditLogger()
-    MemoryManager()
-    AsyncTaskManager()
+    audit = AuditLogger()
+    memory = MemoryManager()
+    tasks = get_task_manager()
+
+    # 仅在 config.yaml 中 indexer.enabled=true 时启动文件索引
+    # 基础模式下不需要 ChromaDB + SentenceTransformer，节省 CPU/内存
+    indexer = None
+    try:
+        import yaml
+        with open(config.PROJECT_ROOT / "config.yaml", encoding="utf-8") as f:
+            idx_cfg = yaml.safe_load(f).get("indexer", {})
+        if idx_cfg.get("enabled", False):
+            indexer = BackgroundIndexer()
+            indexer.start()
+    except Exception:
+        pass
+
+    return {
+        "audit": audit,
+        "memory": memory,
+        "tasks": tasks,
+        "indexer": indexer,
+        "model_cache": None,
+    }
 
 
-def _dry_run_loop(model, use_langgraph: bool, dispatcher, conversations: dict):
+def _cleanup(phase3_ctx):
+    from tasks.manager import get_task_manager
+    tm = get_task_manager()
+    try:
+        tm.io_pool.shutdown(wait=False)
+    except Exception:
+        pass
+    try:
+        tm.cpu_pool.shutdown(wait=False)
+    except Exception:
+        pass
+    indexer = phase3_ctx.get("indexer")
+    if indexer:
+        indexer.stop()
+
+
+def _dry_run_loop(model, use_langgraph: bool, dispatcher, conversations: dict, phase3_ctx):
     from channel.client import InboundMessage
     print("离线模式 — 输入消息，Ctrl+C 退出\n")
     while config.running:
@@ -139,85 +233,11 @@ def _dry_run_loop(model, use_langgraph: bool, dispatcher, conversations: dict):
                                 context_token="", text=text)
             dispatcher.handle_message(msg)
         else:
-            reply = _agent_loop(model, "dry-run", text, conversations, None)
+            msg = InboundMessage(seq=0, from_user_id="dry-run", session_id="",
+                                context_token="", text=text)
+            reply = agent_loop(model, "dry-run", msg, conversations, None, phase3_ctx)
             if reply:
                 print(f"\n助手: {reply}\n")
-
-
-def _agent_loop(model: llm.BaseLLM, user_id: str, user_text: str,
-                conversations: dict, state: SessionState) -> str:
-    conv = conversations.get(user_id, [])
-    if not conv:
-        conv = [{"role": "system", "content": config.SYSTEM_PROMPT}]
-    conv.append({"role": "user", "content": user_text})
-
-    for _round in range(config.MAX_TOOL_ROUNDS):
-        resp = model.chat(conv)
-
-        if not resp.tool_calls:
-            msg = {"role": "assistant", "content": resp.text}
-            msg.update(resp.extra_fields)
-            conv.append(msg)
-            _trim_history(conv, config.MAX_HISTORY)
-            conversations[user_id] = conv
-            return resp.text
-
-        print(f"  🔧 调用 {len(resp.tool_calls)} 个工具: {[tc.name for tc in resp.tool_calls]}")
-        conv.append(model.wrap_tool_call(resp.tool_calls, resp.extra_fields))
-
-        for tc in resp.tool_calls:
-            result = tools.execute(tc.name, tc.args, state, user_id)
-            if len(result) > 4000:
-                result = result[:4000] + "\n...(结果已截断)"
-            conv.append(model.wrap_tool_result(tc, result))
-            print(f"  ✓ {tc.name} → {len(result)} chars")
-
-    conv.append({"role": "user", "content": "请基于以上工具调用结果给出最终回复。"})
-    final = model.chat(conv)
-    final_msg = {"role": "assistant", "content": final.text}
-    final_msg.update(final.extra_fields)
-    conv.append(final_msg)
-    _trim_history(conv, config.MAX_HISTORY)
-    conversations[user_id] = conv
-    return final.text
-
-
-def _trim_history(conv: list, max_n: int) -> None:
-    if len(conv) <= max_n + 1:
-        return
-    system = conv[0] if conv[0]["role"] == "system" else None
-    recent = conv[-max_n:]
-    while recent and recent[0]["role"] == "tool":
-        recent.pop(0)
-    conv.clear()
-    if system:
-        conv.append(system)
-    conv.extend(recent)
-
-
-def do_login() -> SessionState:
-    print("正在获取登录二维码...")
-    qrcode_url, qrcode = channel.start_qr_login()
-    try:
-        import qrcode as qrlib
-        qr = qrlib.QRCode()
-        qr.add_data(qrcode_url)
-        qr.print_ascii(invert=True)
-    except ImportError:
-        pass
-    print(f"\n用手机微信扫描上方二维码，或访问：\n{qrcode_url}\n")
-    print("等待扫码...", end="", flush=True)
-    result = channel.wait_for_login(qrcode)
-    state = SessionState(token=result.bot_token, base_url=result.base_url)
-    state.context_tokens[result.user_id] = ""
-    channel.save_session(state, str(config.SESSION_FILE))
-    return state
-
-
-def _sleep(seconds: float) -> None:
-    end = time.time() + seconds
-    while time.time() < end and config.running:
-        time.sleep(0.1)
 
 
 if __name__ == "__main__":

@@ -84,3 +84,16 @@ class AsyncTaskManager:
 
     def set_on_complete(self, callback: Callable):
         self._on_complete_callback = callback
+
+
+_task_manager: "AsyncTaskManager | None" = None
+_task_manager_lock = threading.Lock()
+
+
+def get_task_manager() -> "AsyncTaskManager":
+    global _task_manager
+    if _task_manager is None:
+        with _task_manager_lock:
+            if _task_manager is None:
+                _task_manager = AsyncTaskManager()
+    return _task_manager
