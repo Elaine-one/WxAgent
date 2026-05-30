@@ -3,6 +3,8 @@ from tools.registry import ToolRegistry
 
 import tools.file_tools
 import tools.system_tools
+import tools.code_tools
+import tools.web_tools
 
 ALL_TOOLS = ToolRegistry.get_all_defs()
 

@@ -89,6 +89,26 @@ def _send_file(path: str, state=None, user_id: str = "", message: str = "") -> s
         return f"发送失败: {err}"
 
 
+def _write_file(path: str, content: str, state=None, user_id: str = "") -> ToolResult:
+    from security.path_sandbox import PathSandbox
+    try:
+        safe_path = PathSandbox.validate_write(path)
+        safe_path.parent.mkdir(parents=True, exist_ok=True)
+        safe_path.write_text(content, encoding="utf-8")
+        return ToolResult(
+            success=True,
+            content=f"已写入: {safe_path}",
+            display=f"已保存到 {safe_path.name}",
+            artifact_path=str(safe_path),
+        )
+    except PermissionError as e:
+        return ToolResult(
+            success=False, error=str(e),
+            requires_confirmation=True,
+            confirmation_detail={"type": "write_outside_workspace", "path": path},
+        )
+
+
 ToolRegistry.register(
     ToolDef(
         name="read_file",
@@ -137,4 +157,17 @@ ToolRegistry.register(
         required=["path"],
     ),
     _send_file,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="write_file",
+        description="写入文件内容。所有写操作限制在 workspace 目录内。",
+        parameters={
+            "path": {"type": "string", "description": "文件路径，如 workspace/output/report.txt"},
+            "content": {"type": "string", "description": "要写入的文件内容"},
+        },
+        required=["path", "content"],
+    ),
+    _write_file,
 )
