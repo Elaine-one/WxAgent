@@ -5,10 +5,11 @@ from collections import OrderedDict
 import config
 from channel.client import InboundMessage, SessionState
 from channel.sender import send_message
+from core.deps import Deps
 from core.state import AgentState
 from llm.streaming import split_for_wechat
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("wxagent.dispatcher")
 
 
 class Dispatcher:
@@ -19,8 +20,14 @@ class Dispatcher:
         self.graph = graph
         self.session = session
         self.memory = memory
+        self.deps: Deps = getattr(graph, "_deps", None)
         self._sessions: OrderedDict[str, tuple[float, dict]] = OrderedDict()
         self._setup_task_callback()
+
+    def _configurable(self, uid: str) -> dict:
+        if self.deps:
+            self.deps.session = self.session
+        return {"configurable": {"thread_id": uid, "deps": self.deps}}
 
     def _get_or_create_state(self, uid: str) -> dict:
         now = time.time()
@@ -46,17 +53,20 @@ class Dispatcher:
 
     def handle_message(self, msg: InboundMessage) -> None:
         uid = msg.from_user_id
-        configurable = {"configurable": {"thread_id": uid}}
+        configurable = self._configurable(uid)
 
-        image_urls = []
-        image_media_refs = []
-        if msg.msg_type == "image":
-            if msg.image_url:
-                image_urls = [msg.image_url]
-            if msg.image_media_ref:
-                image_media_refs = [msg.image_media_ref]
-            if not image_urls and image_media_refs:
-                logger.info("image_no_url_but_has_media_ref, will download via media_ref")
+        _FIELD_MAP = {
+            "image_url": "image_urls", "image_media_ref": "image_media_refs",
+            "file_url": "file_urls", "file_media_ref": "file_media_refs",
+            "file_name": "file_names", "file_size": "file_sizes",
+            "voice_url": "voice_urls", "voice_media_ref": "voice_media_refs",
+            "video_url": "video_urls", "video_media_ref": "video_media_refs",
+        }
+        media_state = {}
+        for attr, state_key in _FIELD_MAP.items():
+            val = getattr(msg, attr, None)
+            if val:
+                media_state[state_key] = [val]
 
         try:
             snapshot = self.graph.get_state(configurable)
@@ -71,14 +81,13 @@ class Dispatcher:
                     "confirmation_response": msg.text,
                 }
                 self.graph.update_state(configurable, state_update, as_node="wait_user")
-                logger.info("interrupt_resume", extra={"uid": uid, "user_input": msg.text[:80]})
+                logger.info("interrupt_resume", extra={"user_id": uid, "user_input": msg.text[:80]})
                 result = self.graph.invoke(None, configurable)
             else:
                 state = self._get_or_create_state(uid)
                 state["user_input"] = msg.text
                 state["msg_type"] = msg.msg_type
-                state["image_urls"] = image_urls
-                state["image_media_refs"] = image_media_refs
+                state.update(media_state)
                 result = self.graph.invoke(state, configurable)
         else:
             state = self._get_or_create_state(uid)
@@ -86,10 +95,9 @@ class Dispatcher:
                 state = self._new_state(uid)
             state["user_input"] = msg.text
             state["msg_type"] = msg.msg_type
-            state["image_urls"] = image_urls
-            state["image_media_refs"] = image_media_refs
-            state["interrupted"] = bool(state.get("plan") and not state.get("task_complete"))
-            logger.info("new_invocation", extra={"uid": uid, "user_input": msg.text[:80]})
+            state.update(media_state)
+            state["interrupted"] = bool(state.get("messages") and len(state.get("messages", [])) > 1 and not state.get("task_complete"))
+            logger.info("new_invocation", extra={"user_id": uid, "user_input": msg.text[:80]})
             result = self.graph.invoke(state, configurable)
 
         if result is not None:
@@ -101,15 +109,17 @@ class Dispatcher:
                     try:
                         compressed = self.memory.maybe_compress(messages, self._get_model())
                         result["messages"] = compressed
-                        logger.info("messages_compressed", extra={"uid": uid, "before": len(messages), "after": len(compressed)})
+                        logger.info("messages_compressed", extra={"user_id": uid, "before": len(messages), "after": len(compressed)})
                     except Exception:
                         pass
 
         if result and result.get("final_response"):
+            logger.info("send_response", extra={"user_id": uid, "text_preview": result["final_response"][:200], "text_len": len(result["final_response"])})
             self._send_bubbles(uid, result["final_response"])
         elif result and result.get("pending_confirmation") and not result.get("task_complete"):
             detail = result["pending_confirmation"]
             confirm_text = self._format_confirmation(detail)
+            logger.info("send_confirm", extra={"user_id": uid, "confirm_type": detail.get("type", ""), "text_preview": confirm_text[:200]})
             send_message(self.session, uid, confirm_text)
 
     def _get_model(self):
@@ -176,16 +186,12 @@ class Dispatcher:
             "task_id": "",
             "messages": [{"role": "system", "content": config.SYSTEM_PROMPT}],
             "user_input": "",
-            "plan": [],
-            "current_step": 0,
-            "retry_counts": {},
             "last_error": "",
             "pending_confirmation": {},
             "confirmation_response": "",
             "interrupted": False,
             "interrupted_message": "",
             "msg_type": "",
-            "_reflector_decision": "",
             "final_response": "",
             "task_complete": False,
             "messages_window": 50,
@@ -195,4 +201,17 @@ class Dispatcher:
             "image_urls": [],
             "image_media_refs": [],
             "image_description": "",
+            "memory_context": "",
+            "confirm_rounds": 0,
+            "saved_image_paths": [],
+            "file_urls": [],
+            "file_media_refs": [],
+            "file_names": [],
+            "file_sizes": [],
+            "saved_file_paths": [],
+            "voice_urls": [],
+            "voice_media_refs": [],
+            "voice_transcription": "",
+            "video_urls": [],
+            "video_media_refs": [],
         }

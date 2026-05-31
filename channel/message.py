@@ -23,37 +23,90 @@ def merge_messages(msgs: list) -> "InboundMessage":
     text_parts = []
     all_image_urls = []
     all_image_media_refs = []
+    all_file_urls = []
+    all_file_media_refs = []
+    all_file_names = []
+    all_file_sizes = []
+    all_voice_urls = []
+    all_voice_media_refs = []
+    all_video_urls = []
+    all_video_media_refs = []
     has_image = False
+    has_file = False
+    has_voice = False
+    has_video = False
     last_msg = msgs[-1]
 
     for m in msgs:
-        if isinstance(m, InboundMessage):
-            if m.msg_type == "image":
-                has_image = True
-                if m.image_url:
-                    all_image_urls.append(m.image_url)
-                if m.image_media_ref:
-                    all_image_media_refs.append(m.image_media_ref)
-                if m.text and m.text != "[图片消息]":
-                    text_parts.append(m.text)
-            else:
-                if m.text:
-                    text_parts.append(m.text)
+        if not isinstance(m, InboundMessage):
+            continue
+        if m.msg_type == "image":
+            has_image = True
+            if m.image_url:
+                all_image_urls.append(m.image_url)
+            if m.image_media_ref:
+                all_image_media_refs.append(m.image_media_ref)
+            if m.text and m.text != "[图片消息]":
+                text_parts.append(m.text)
+        elif m.msg_type == "file":
+            has_file = True
+            if m.file_url:
+                all_file_urls.append(m.file_url)
+            if m.file_media_ref:
+                all_file_media_refs.append(m.file_media_ref)
+            if m.file_name:
+                all_file_names.append(m.file_name)
+            if m.file_size:
+                all_file_sizes.append(m.file_size)
+            if m.text:
+                text_parts.append(m.text)
+        elif m.msg_type == "voice":
+            has_voice = True
+            if m.voice_url:
+                all_voice_urls.append(m.voice_url)
+            if m.voice_media_ref:
+                all_voice_media_refs.append(m.voice_media_ref)
+            if m.text:
+                text_parts.append(m.text)
+        elif m.msg_type == "video":
+            has_video = True
+            if m.video_url:
+                all_video_urls.append(m.video_url)
+            if m.video_media_ref:
+                all_video_media_refs.append(m.video_media_ref)
+            if m.text:
+                text_parts.append(m.text)
+        else:
+            if m.text:
+                text_parts.append(m.text)
 
     merged_text = "\n".join(text_parts) if text_parts else ""
 
     if has_image:
         if not merged_text or merged_text == "[图片消息]":
             merged_text = "[图片消息]"
-        image_url = all_image_urls[0] if all_image_urls else ""
-        image_media_ref = all_image_media_refs[0] if all_image_media_refs else {}
+    elif has_file:
+        if not merged_text:
+            merged_text = "[文件消息]"
+    elif has_voice:
+        if not merged_text:
+            merged_text = "[语音消息]"
+    elif has_video:
+        if not merged_text:
+            merged_text = "[视频消息]"
+
+    if has_image:
+        msg_type = "image"
+    elif has_file:
+        msg_type = "file"
+    elif has_voice:
+        msg_type = "voice"
+    elif has_video:
+        msg_type = "video"
     else:
-        image_url = ""
-        image_media_ref = {}
+        msg_type = "text"
 
-    msg_type = "image" if has_image else "text"
-
-    print(f"  📦 合并 {len(msgs)} 条消息 (type={msg_type}, images={len(all_image_urls)})")
+    print(f"  📦 合并 {len(msgs)} 条消息 (type={msg_type})")
 
     return InboundMessage(
         seq=last_msg.seq,
@@ -64,8 +117,16 @@ def merge_messages(msgs: list) -> "InboundMessage":
         text=merged_text,
         create_time_ms=last_msg.create_time_ms,
         msg_type=msg_type,
-        image_url=image_url,
-        image_media_ref=image_media_ref,
+        image_url=all_image_urls[0] if all_image_urls else "",
+        image_media_ref=all_image_media_refs[0] if all_image_media_refs else {},
+        file_url=all_file_urls[0] if all_file_urls else "",
+        file_media_ref=all_file_media_refs[0] if all_file_media_refs else {},
+        file_name=all_file_names[0] if all_file_names else "",
+        file_size=all_file_sizes[0] if all_file_sizes else 0,
+        voice_url=all_voice_urls[0] if all_voice_urls else "",
+        voice_media_ref=all_voice_media_refs[0] if all_voice_media_refs else {},
+        video_url=all_video_urls[0] if all_video_urls else "",
+        video_media_ref=all_video_media_refs[0] if all_video_media_refs else {},
     )
 
 

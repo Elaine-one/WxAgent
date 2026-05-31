@@ -13,6 +13,7 @@ import tools
 from channel import SessionState, SessionExpired
 from channel.message import message_signature, merge_messages
 from core.agent_loop import agent_loop, do_login, interruptible_sleep
+from observability.logger import get_logger
 
 
 def main():
@@ -26,6 +27,7 @@ def main():
         print("错误：请在 .env 中设置 LLM_API_KEY")
         sys.exit(1)
 
+    get_logger()
     config.ensure_data_dirs()
     config.ensure_workspace()
     config.init_workspace_packages("basic")
@@ -145,7 +147,6 @@ def main():
                 if _use_langgraph:
                     _dispatcher.handle_message(merged_msg)
                     channel.save_session(state, str(config.SESSION_FILE))
-                    print(f"  → LangGraph 已处理")
                 else:
                     reply = agent_loop(model, uid, merged_msg, conversations, state, phase3_ctx)
                     if reply:

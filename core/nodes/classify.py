@@ -2,11 +2,12 @@ import json
 import logging
 
 from channel.client import download_image_as_base64
+from channel.message import save_recent_images
+from core.deps import Deps
 from core.state import AgentState
 from observability.metrics import record_llm_call
-from tools.base import ToolDef
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("wxagent.classify")
 
 CLASSIFY_PROMPT = """判断用户消息的类型，回复 JSON:
 {{"type": "meta"|"confirm"|"new_task"|"interrupt"}}
@@ -20,14 +21,23 @@ CLASSIFY_PROMPT = """判断用户消息的类型，回复 JSON:
 VISION_PROMPT = "请详细描述这张图片的内容，包括文字、物体、场景等所有可见信息。"
 
 
+def _get_deps(config: dict | None) -> Deps:
+    if config:
+        deps = config.get("configurable", {}).get("deps")
+        if deps is not None:
+            return deps
+    raise RuntimeError("Deps not found in config")
+
+
 def _build_multimodal_content(state, session=None):
     text = state.get("user_input", "")
     images = state.get("image_urls", [])
     media_refs = state.get("image_media_refs", [])
     if not images and not media_refs:
-        return text
+        return text, []
 
     content = [{"type": "text", "text": text or "请描述这张图片"}]
+    b64_list = []
 
     if images:
         for i, url in enumerate(images):
@@ -35,6 +45,7 @@ def _build_multimodal_content(state, session=None):
             b64_uri = download_image_as_base64(url, session, media_ref)
             if b64_uri:
                 content.append({"type": "image_url", "image_url": {"url": b64_uri}})
+                b64_list.append(b64_uri)
             else:
                 content.append({"type": "text", "text": f"[图片下载失败: {url[:80]}]"})
     elif media_refs:
@@ -42,22 +53,27 @@ def _build_multimodal_content(state, session=None):
             b64_uri = download_image_as_base64("", session, media_ref)
             if b64_uri:
                 content.append({"type": "image_url", "image_url": {"url": b64_uri}})
+                b64_list.append(b64_uri)
             else:
                 content.append({"type": "text", "text": "[图片下载失败: media_ref无效]"})
 
-    return content
+    return content, b64_list
 
 
-def classify_node(state: AgentState, *, session, tools: list[ToolDef],
-                  memory=None, default_model=None, model_cache=None) -> AgentState:
-    model = default_model
+def classify_node(state: AgentState, config) -> AgentState:
+    deps = _get_deps(config)
+    model = deps.model
+    real_session = deps.real_session(config)
+    memory = deps.memory
+    model_cache = deps.model_cache
+
     has_image = bool(state.get("image_urls")) or bool(state.get("image_media_refs"))
     main_supports_vision = False
     vision_model = None
 
     if has_image and model_cache and "vision" in model_cache:
         vision_model = model_cache["vision"]
-        if vision_model is default_model:
+        if vision_model is model:
             main_supports_vision = True
             model = vision_model
         else:
@@ -65,7 +81,7 @@ def classify_node(state: AgentState, *, session, tools: list[ToolDef],
 
     if has_image and not main_supports_vision and vision_model:
         try:
-            content = _build_multimodal_content(state, session)
+            content, b64_list = _build_multimodal_content(state, real_session)
             if isinstance(content, list):
                 vision_messages = [{"role": "user", "content": content}]
                 vision_resp = vision_model.chat(vision_messages)
@@ -77,11 +93,16 @@ def classify_node(state: AgentState, *, session, tools: list[ToolDef],
                 else:
                     state["user_input"] = f"请描述这张图片\n\n[图片内容：{image_desc}]"
                 state["image_description"] = image_desc
+                if b64_list:
+                    saved_paths = save_recent_images(b64_list, state.get("user_id", ""))
+                    state["saved_image_paths"] = saved_paths
+                    if saved_paths:
+                        print(f"  💾 图片已保存: {', '.join(saved_paths)}")
         except Exception as e:
             state["image_description"] = f"[图片识别失败: {e}]"
             logger.warning("image_analysis_failed", extra={"error": str(e)[:200]})
 
-    has_active = bool(state.get("plan") and not state.get("task_complete"))
+    has_active = not state.get("task_complete", True)
     prompt = CLASSIFY_PROMPT.format(
         has_active_task=has_active,
         user_input=state["user_input"],
@@ -94,10 +115,17 @@ def classify_node(state: AgentState, *, session, tools: list[ToolDef],
         except Exception:
             pass
 
+    state["memory_context"] = context
+
     full_prompt = f"[用户上下文]\n{context}\n\n{prompt}" if context else prompt
 
     if has_image and main_supports_vision:
-        content = _build_multimodal_content(state, session)
+        content, b64_list = _build_multimodal_content(state, real_session)
+        if b64_list:
+            saved_paths = save_recent_images(b64_list, state.get("user_id", ""))
+            state["saved_image_paths"] = saved_paths
+            if saved_paths:
+                print(f"  💾 图片已保存: {', '.join(saved_paths)}")
         if isinstance(content, str):
             messages = [{"role": "user", "content": full_prompt}]
         else:

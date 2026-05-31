@@ -4,6 +4,7 @@ from channel.client import (
     ITEM_TYPE_VOICE, UPLOAD_TYPE_FILE, UPLOAD_TYPE_IMAGE, UPLOAD_TYPE_VIDEO,
     UPLOAD_TYPE_VOICE, InboundMessage, LoginResult, SessionExpired,
     SessionState, _build_base_info, _build_headers,
+    download_cdn_file, download_image_as_base64,
 )
 from channel.login import poll_qr_status, start_qr_login, wait_for_login
 from channel.receiver import get_updates

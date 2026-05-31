@@ -1,15 +1,6 @@
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, TypedDict
 
 from langgraph.graph.message import add_messages
-
-
-class PlanStep(TypedDict):
-    step: int
-    description: str
-    tool: str
-    args: dict
-    status: Literal["pending", "running", "done", "failed", "skipped"]
-    depends_on: list[int]
 
 
 class AgentState(TypedDict):
@@ -19,10 +10,6 @@ class AgentState(TypedDict):
     messages: Annotated[list[dict], add_messages]
     user_input: str
 
-    plan: list[PlanStep]
-    current_step: int
-
-    retry_counts: dict[int, int]
     last_error: str
 
     pending_confirmation: dict
@@ -32,7 +19,6 @@ class AgentState(TypedDict):
     interrupted_message: str
 
     msg_type: str
-    _reflector_decision: str
 
     final_response: str
     task_complete: bool
@@ -44,3 +30,16 @@ class AgentState(TypedDict):
     image_urls: list[str]
     image_media_refs: list[dict]
     image_description: str
+    memory_context: str
+    confirm_rounds: int
+    saved_image_paths: list[str]
+    file_urls: list[str]
+    file_media_refs: list[dict]
+    file_names: list[str]
+    file_sizes: list[int]
+    saved_file_paths: list[str]
+    voice_urls: list[str]
+    voice_media_refs: list[dict]
+    voice_transcription: str
+    video_urls: list[str]
+    video_media_refs: list[dict]
