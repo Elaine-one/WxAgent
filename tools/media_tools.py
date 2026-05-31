@@ -10,15 +10,52 @@ from tools.registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _silk_to_wav(silk_path: str) -> str | None:
+    wav_path = silk_path.rsplit(".", 1)[0] + ".wav"
+    try:
+        import pilk
+        pilk.decode(silk_path, wav_path)
+        if Path(wav_path).is_file():
+            return wav_path
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug("pilk decode failed: %s", e)
+
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", silk_path, "-acodec", "pcm_s16le",
+             "-ar", "24000", "-ac", "1", wav_path],
+            capture_output=True, timeout=30,
+        )
+        if Path(wav_path).is_file():
+            return wav_path
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.debug("ffmpeg silk decode failed: %s", e)
+
+    return None
+
+
 def _transcribe_audio(file_path: str, language: str = "zh",
                       state=None, user_id: str = "") -> ToolResult:
     if not Path(file_path).is_file():
         return ToolResult(success=False, error=f"文件不存在: {file_path}")
 
+    actual_path = file_path
+    if file_path.lower().endswith(".silk"):
+        wav_path = _silk_to_wav(file_path)
+        if wav_path:
+            actual_path = wav_path
+            logger.info("silk_to_wav: %s -> %s", file_path, wav_path)
+        else:
+            return ToolResult(success=False, error="SILK 格式转换失败：需要安装 pilk (pip install pilk) 或 ffmpeg")
+
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("base", device="cpu", compute_type="int8")
-        segments, _ = model.transcribe(file_path, language=language)
+        segments, _ = model.transcribe(actual_path, language=language)
         text = " ".join(s.text for s in segments)
         return ToolResult(
             success=True, content=text,
@@ -26,7 +63,7 @@ def _transcribe_audio(file_path: str, language: str = "zh",
         )
     except ImportError:
         logger.info("faster_whisper 不可用，降级到云端 API")
-        return _transcribe_via_api(file_path, language)
+        return _transcribe_via_api(actual_path, language)
     except Exception as e:
         return ToolResult(success=False, error=f"转录失败: {e}")
 

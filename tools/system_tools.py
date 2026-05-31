@@ -12,30 +12,31 @@ def _extract_affected_targets(command: str) -> list[str]:
     return targets or ["（命令中未包含明确路径，请人工确认）"]
 
 
-def _run_shell(command: str, state=None, user_id: str = "") -> ToolResult:
+def _run_shell(command: str, state=None, user_id: str = "", _skip_risk_check: bool = False) -> ToolResult:
     from security.risk_levels import classify_command, RiskLevel, is_dev_mode
     from security.audit import audit_logger
 
-    risk, reason = classify_command(command)
+    if not _skip_risk_check:
+        risk, reason = classify_command(command)
 
-    if risk == RiskLevel.DANGEROUS:
-        audit_logger.log(user_id, "run_shell", risk, {"command": command}, "blocked_confirmation_required")
-        return ToolResult(
-            success=False,
-            error=f"命令需要确认: {reason}",
-            requires_confirmation=True,
-            confirmation_detail={
-                "type": "dangerous_command",
-                "command": command,
-                "risk_level": "dangerous",
-                "reason": reason,
-                "affected_targets": _extract_affected_targets(command),
-            },
-        )
+        if risk == RiskLevel.DANGEROUS:
+            audit_logger.log(user_id, "run_shell", risk, {"command": command}, "blocked_confirmation_required")
+            return ToolResult(
+                success=False,
+                error=f"命令需要确认: {reason}",
+                requires_confirmation=True,
+                confirmation_detail={
+                    "type": "dangerous_command",
+                    "command": command,
+                    "risk_level": "dangerous",
+                    "reason": reason,
+                    "affected_targets": _extract_affected_targets(command),
+                },
+            )
 
-    if risk == RiskLevel.CAUTION:
-        audit_logger.log(user_id, "run_shell", risk, {"command": command},
-                        "caution_dev_auto" if is_dev_mode() else "caution_executed")
+        if risk == RiskLevel.CAUTION:
+            audit_logger.log(user_id, "run_shell", risk, {"command": command},
+                            "caution_dev_auto" if is_dev_mode() else "caution_executed")
 
     try:
         result = subprocess.run(

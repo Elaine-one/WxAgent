@@ -78,6 +78,14 @@ class InboundMessage:
     msg_type: str = "text"
     image_url: str = ""
     image_media_ref: dict = field(default_factory=dict)
+    file_url: str = ""
+    file_media_ref: dict = field(default_factory=dict)
+    file_name: str = ""
+    file_size: int = 0
+    voice_url: str = ""
+    voice_media_ref: dict = field(default_factory=dict)
+    video_url: str = ""
+    video_media_ref: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -104,14 +112,7 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
             ciphertext = resp.content
             aes_key_b64 = media_ref.get("aes_key", "")
             if aes_key_b64:
-                aes_key_hex = base64.b64decode(aes_key_b64).decode()
-                aes_key_bytes = bytes.fromhex(aes_key_hex)
-                cipher = Cipher(algorithms.AES(aes_key_bytes), modes.ECB())
-                decryptor = cipher.decryptor()
-                plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-                pad_len = plaintext[-1]
-                if 0 < pad_len <= 16:
-                    plaintext = plaintext[:-pad_len]
+                plaintext = _decrypt_cdn_content(ciphertext, aes_key_b64)
                 b64 = base64.b64encode(plaintext).decode()
                 return f"data:image/jpeg;base64,{b64}"
             else:
@@ -144,6 +145,79 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
             url[:120] if url else "(空)",
             "有" if session else "无",
             "有" if media_ref else "无",
+            e,
+        )
+        return ""
+
+
+def download_media_list(urls: list[str], media_refs: list[dict],
+                        session: SessionState | None, sub_dir: str,
+                        default_name: str = "file", default_ext: str = "") -> list[str]:
+    import time
+    from pathlib import Path
+    saved = []
+    ts = int(time.time())
+    all_items = [(urls[i], media_refs[i] if i < len(media_refs) else None) for i in range(len(urls))]
+    all_items += [("", ref) for ref in media_refs[len(urls):]]
+    for i, (url, ref) in enumerate(all_items):
+        name = f"{ts}_{i}_{default_name}{default_ext}" if default_ext else f"{ts}_{i}_{default_name}"
+        save_path = str(Path(sub_dir) / name)
+        result = download_cdn_file(url, session, ref, save_path)
+        if result:
+            saved.append(result)
+    return saved
+
+
+def _decrypt_cdn_content(ciphertext: bytes, aes_key_b64: str) -> bytes:
+    aes_key_hex = base64.b64decode(aes_key_b64).decode()
+    aes_key_bytes = bytes.fromhex(aes_key_hex)
+    cipher = Cipher(algorithms.AES(aes_key_bytes), modes.ECB())
+    decryptor = cipher.decryptor()
+    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+    pad_len = plaintext[-1]
+    if 0 < pad_len <= 16:
+        plaintext = plaintext[:-pad_len]
+    return plaintext
+
+
+def download_cdn_file(url: str, session: SessionState | None = None,
+                      media_ref: dict | None = None,
+                      save_path: str | None = None) -> str:
+    try:
+        if media_ref and media_ref.get("encrypt_query_param"):
+            eqp = media_ref["encrypt_query_param"]
+            download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
+            resp = httpx.get(download_url, timeout=60, follow_redirects=True)
+            resp.raise_for_status()
+            ciphertext = resp.content
+            aes_key_b64 = media_ref.get("aes_key", "")
+            if aes_key_b64:
+                plaintext = _decrypt_cdn_content(ciphertext, aes_key_b64)
+            else:
+                plaintext = ciphertext
+        elif url:
+            headers = {}
+            if session and "cdn.weixin" in url:
+                headers = _build_headers(token=session.token)
+            resp = httpx.get(url, headers=headers, timeout=60, follow_redirects=True)
+            resp.raise_for_status()
+            plaintext = resp.content
+        else:
+            return ""
+
+        if save_path:
+            from pathlib import Path
+            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(save_path).write_bytes(plaintext)
+            return save_path
+
+        return base64.b64encode(plaintext).decode()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            "CDN文件下载失败 url=%s save_path=%s: %s",
+            url[:120] if url else "(空)",
+            save_path or "(内存)",
             e,
         )
         return ""

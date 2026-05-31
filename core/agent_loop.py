@@ -3,7 +3,7 @@ import time
 import config
 import llm
 import tools
-from channel.client import InboundMessage, SessionState, download_image_as_base64
+from channel.client import InboundMessage, SessionState, download_image_as_base64, download_media_list
 from channel.message import (
     extract_recent_image_context,
     find_recent_image_files,
@@ -16,11 +16,37 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
     user_text = msg.text if isinstance(msg, InboundMessage) else msg
     image_urls = []
     image_media_refs = []
-    if isinstance(msg, InboundMessage) and msg.msg_type == "image":
-        if msg.image_url:
-            image_urls = [msg.image_url]
-        if msg.image_media_ref:
-            image_media_refs = [msg.image_media_ref]
+    file_urls = []
+    file_media_refs = []
+    file_names = []
+    voice_urls = []
+    voice_media_refs = []
+    video_urls = []
+    video_media_refs = []
+
+    if isinstance(msg, InboundMessage):
+        if msg.msg_type == "image":
+            if msg.image_url:
+                image_urls = [msg.image_url]
+            if msg.image_media_ref:
+                image_media_refs = [msg.image_media_ref]
+        elif msg.msg_type == "file":
+            if msg.file_url:
+                file_urls = [msg.file_url]
+            if msg.file_media_ref:
+                file_media_refs = [msg.file_media_ref]
+            if msg.file_name:
+                file_names = [msg.file_name]
+        elif msg.msg_type == "voice":
+            if msg.voice_url:
+                voice_urls = [msg.voice_url]
+            if msg.voice_media_ref:
+                voice_media_refs = [msg.voice_media_ref]
+        elif msg.msg_type == "video":
+            if msg.video_url:
+                video_urls = [msg.video_url]
+            if msg.video_media_ref:
+                video_media_refs = [msg.video_media_ref]
 
     conv = conversations.get(user_id, [])
     if not conv:
@@ -36,7 +62,52 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
 
     recent_image_context = extract_recent_image_context(conv)
 
-    if image_urls or image_media_refs:
+    if file_urls or file_media_refs:
+        sub_dir = str(config.WORKSPACE_DIR / "downloads" / "files")
+        saved_file_paths = download_media_list(file_urls, file_media_refs, state, sub_dir, "file")
+        for p in saved_file_paths:
+            print(f"  📥 文件已下载: {p}")
+        file_info = "\n".join(f"- {fn}" for fn in file_names) if file_names else "- 未知文件"
+        enriched = f"{user_text}\n\n[用户发送了文件]\n{file_info}" if user_text else f"[用户发送了文件]\n{file_info}"
+        if saved_file_paths:
+            enriched += f"\n\n[文件已保存到:\n" + "\n".join(saved_file_paths) + "]"
+        conv.append({"role": "user", "content": enriched})
+
+    elif voice_urls or voice_media_refs:
+        sub_dir = str(config.WORKSPACE_DIR / "downloads" / "voice")
+        saved_voice_paths = download_media_list(voice_urls, voice_media_refs, state, sub_dir, "voice", ".silk")
+        for p in saved_voice_paths:
+            print(f"  🎤 语音已下载: {p}")
+        voice_text = ""
+        if user_text:
+            voice_url_marker = "\n[voice_url:"
+            cleaned = user_text.split(voice_url_marker)[0].strip() if voice_url_marker in user_text else user_text
+            voice_text = cleaned
+        if not voice_text or voice_text == "[语音消息]":
+            if saved_voice_paths:
+                try:
+                    tr = tools.execute("transcribe_audio", {"file_path": saved_voice_paths[0]}, state, user_id)
+                    if isinstance(tr, str) and tr:
+                        voice_text = f"[语音消息] {tr}"
+                        print(f"  🎤 语音转文字(Whisper): {tr[:80]}")
+                except Exception:
+                    pass
+        if voice_text and voice_text != "[语音消息]":
+            print(f"  🎤 语音转文字: {voice_text[:80]}")
+        enriched = voice_text if voice_text and voice_text != "[语音消息]" else "[语音消息：转写失败]"
+        conv.append({"role": "user", "content": enriched})
+
+    elif video_urls or video_media_refs:
+        sub_dir = str(config.WORKSPACE_DIR / "downloads" / "videos")
+        saved_video_paths = download_media_list(video_urls, video_media_refs, state, sub_dir, "video", ".mp4")
+        for p in saved_video_paths:
+            print(f"  🎬 视频已下载: {p}")
+        enriched = f"{user_text}\n\n[用户发送了视频]" if user_text else "[用户发送了视频]"
+        if saved_video_paths:
+            enriched += f"\n\n[视频文件路径: {', '.join(saved_video_paths)}]"
+        conv.append({"role": "user", "content": enriched})
+
+    elif image_urls or image_media_refs:
         b64_images = []
         if image_urls:
             for i, url in enumerate(image_urls):

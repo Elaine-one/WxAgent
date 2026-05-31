@@ -1,16 +1,12 @@
 import logging
 import sys
-from functools import partial
 
 from langgraph.graph import END, StateGraph
 
+from core.deps import Deps
 from core.state import AgentState
 from core.nodes.classify import classify_node
-from core.nodes.planner import planner_node
-from core.nodes.executor import executor_node
-from core.nodes.self_heal import self_heal_node
-from core.nodes.reflector import reflector_node
-from core.nodes.respond import respond_node
+from core.nodes.react import react_node
 from llm import create_llm
 from llm.fallback import LLMFallback
 from llm.router import ModelRouter
@@ -18,7 +14,7 @@ from tools.registry import ToolRegistry
 
 import config as cfg
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("wxagent.graph")
 
 
 def _build_model_cache(model, tools_list) -> dict:
@@ -35,8 +31,7 @@ def _build_model_cache(model, tools_list) -> dict:
                 tools_list,
             )
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "model_cache task '%s' 跳过: %s", task_type, e
             )
 
@@ -58,8 +53,7 @@ def _build_model_cache(model, tools_list) -> dict:
                 tools_list,
             )
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "model_cache route '%s' 跳过: %s", modality, e
             )
 
@@ -87,71 +81,52 @@ def _after_classify(state: AgentState) -> str:
     if msg_type == "confirm":
         resp = state.get("confirmation_response", "").strip().upper()
         if resp in ("N", "否", "取消", "NO", "CANCEL"):
-            step_idx = state["current_step"]
-            if step_idx < len(state["plan"]):
-                state["plan"][step_idx]["status"] = "skipped"
+            pending = state.get("pending_confirmation", {})
+            tool_call_id = pending.get("tool_call_id", "")
+            if tool_call_id:
+                state["messages"] = [{"role": "tool", "content": "用户已取消此操作", "tool_call_id": tool_call_id}]
             state["pending_confirmation"] = {}
             state["confirmation_response"] = ""
-            return "reflector"
+            state["final_response"] = "已取消操作。"
+            state["task_complete"] = True
+            return "respond"
         state["confirmation_response"] = ""
         return "resume_confirm"
     if msg_type == "meta":
         return "handle_meta"
     if msg_type == "interrupt":
         return "handle_interrupt"
-    return "planner"
+    return "react"
 
 
-def _after_executor(state: AgentState) -> str:
-    step_idx = state["current_step"]
-    step = state["plan"][step_idx] if step_idx < len(state["plan"]) else None
-    if step and step["status"] == "failed":
-        return "self_heal"
-    if step and state.get("pending_confirmation"):
+def _after_react(state: AgentState) -> str:
+    if state.get("pending_confirmation"):
         return "need_confirm"
-    return "reflector"
+    return "respond"
 
 
-def _after_self_heal(state: AgentState) -> str:
-    step_idx = state["current_step"]
-    if state["retry_counts"].get(step_idx, 0) >= 3:
-        return "max_retries"
-    step = state["plan"][step_idx] if step_idx < len(state["plan"]) else None
-    if step and step["status"] == "failed":
-        return "max_retries"
-    if state.get("pending_confirmation", {}).get("type") == "pip_install":
-        return "need_confirm"
-    return "retry"
-
-
-def _after_reflector(state: AgentState) -> str:
-    decision = state.get("_reflector_decision", "all_done")
-    if decision == "all_done":
-        return "respond"
-    if decision == "next_step":
-        step_idx = state["current_step"]
-        return "executor" if step_idx < len(state["plan"]) else "respond"
-    return "planner"
+def _get_deps(config: dict | None) -> Deps:
+    if config:
+        deps = config.get("configurable", {}).get("deps")
+        if deps is not None:
+            return deps
+    raise RuntimeError("Deps not found in config — graph was not initialized correctly")
 
 
 def wait_user_node(state: AgentState) -> AgentState:
     return state
 
 
-def handle_meta_node(state: AgentState, *, session, tools, memory=None,
-                     default_model=None, model_cache=None) -> AgentState:
+def handle_meta_node(state: AgentState, config) -> AgentState:
+    deps = _get_deps(config)
     inp = state["user_input"].strip().lower()
     if inp.startswith("/help"):
-        tool_list = "\n".join(f"  {t.name}: {t.description}" for t in tools)
+        tool_list = "\n".join(f"  {t.name}: {t.description}" for t in deps.tools)
         state["final_response"] = f"可用命令：\n/help /status /tasks /usage /reset\n\n可用工具：\n{tool_list}"
     elif inp.startswith("/status"):
         state["final_response"] = f"会话正常 | 用户: {state['user_id']}"
     elif inp.startswith("/tasks"):
-        if state["plan"]:
-            lines = [f"  {s['status']} 步骤{s['step']}: {s['description']}" for s in state["plan"]]
-            state["final_response"] = "当前任务:\n" + "\n".join(lines)
-        else:
-            state["final_response"] = "没有正在执行的任务"
+        state["final_response"] = "没有正在执行的任务"
     elif inp.startswith("/usage"):
         cost = state.get("cost", {})
         state["final_response"] = (
@@ -161,9 +136,6 @@ def handle_meta_node(state: AgentState, *, session, tools, memory=None,
             f"估算费用: ${cost.get('estimated_usd', 0):.4f}"
         )
     elif inp.startswith("/reset"):
-        state["plan"] = []
-        state["current_step"] = 0
-        state["retry_counts"] = {}
         state["last_error"] = ""
         state["pending_confirmation"] = {}
         state["confirmation_response"] = ""
@@ -175,49 +147,63 @@ def handle_meta_node(state: AgentState, *, session, tools, memory=None,
     return state
 
 
-def handle_interrupt_node(state: AgentState, *, session, tools, memory=None,
-                          default_model=None, model_cache=None) -> AgentState:
+def handle_interrupt_node(state: AgentState, config) -> AgentState:
     state["interrupted_message"] = state["user_input"]
     state["interrupted"] = True
     return state
 
 
-def handle_confirm_node(state: AgentState, *, session, tools, memory=None,
-                        default_model=None, model_cache=None) -> AgentState:
+def handle_confirm_node(state: AgentState, config) -> AgentState:
+    deps = _get_deps(config)
+    real_session = deps.real_session(config)
     pending = state.get("pending_confirmation", {})
     confirm_type = pending.get("type", "confirm")
+    tool_call_id = pending.get("tool_call_id", "")
 
-    if confirm_type == "pip_install":
-        package_name = pending.get("package_name", "")
-        try:
-            import subprocess
-            subprocess.run(
-                [sys.executable, "-m", "pip", "install", package_name],
-                capture_output=True, text=True, timeout=60,
-            )
-            step_idx = state["current_step"]
-            if step_idx < len(state["plan"]):
-                state["plan"][step_idx]["status"] = "pending"
-            state["last_error"] = ""
-            logger.info("pip_install_confirmed", extra={"package": package_name})
-        except Exception as e:
-            state["last_error"] = f"pip install 失败: {e}"
-            logger.info("pip_install_failed", extra={"package": package_name, "error": str(e)[:200]})
-
-    elif confirm_type == "dangerous_command":
+    if confirm_type == "dangerous_command":
         command = pending.get("command", "")
-        result = ToolRegistry.execute("run_shell", {"command": command}, session, state.get("user_id", ""))
-        step_idx = state["current_step"]
-        if step_idx < len(state["plan"]):
-            state["plan"][step_idx]["status"] = "done" if result.success else "failed"
+        result = ToolRegistry.execute("run_shell", {"command": command, "_skip_risk_check": True}, real_session, state.get("user_id", ""))
         state["last_error"] = "" if result.success else result.error
-        logger.info("dangerous_command_confirmed", extra={"command": command[:200]})
+
+        if result.success:
+            result_text = result.content[:4000] if result.content else "命令执行成功"
+        else:
+            result_text = f"错误：{result.error or '执行失败'}"
+        state["messages"] = [{"role": "tool", "content": result_text, "tool_call_id": tool_call_id}]
+        logger.info("dangerous_command_confirmed", extra={"user_id": state.get("user_id", ""), "command": command[:200], "success": result.success})
 
     elif confirm_type == "cloud_consent":
         from security.data_border import get_consent_db
         consent_db = get_consent_db()
         consent_db.record_consent(state.get("user_id", ""), "DuckDuckGo 搜索引擎", True)
+        state["messages"] = [{"role": "tool", "content": "云端访问已授权", "tool_call_id": tool_call_id}]
         logger.info("cloud_consent_confirmed", extra={"user_id": state.get("user_id", "")})
+
+    elif confirm_type == "pip_install":
+        package_name = pending.get("package_name", "")
+        try:
+            import subprocess
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", package_name],
+                capture_output=True, text=True, timeout=60,
+            )
+            state["last_error"] = ""
+            install_result = f"包 {package_name} 安装成功" if proc.returncode == 0 else f"安装失败: {proc.stderr[:500]}"
+            state["messages"] = [{"role": "tool", "content": install_result, "tool_call_id": tool_call_id}]
+            logger.info("pip_install_confirmed", extra={"user_id": state.get("user_id", ""), "package": package_name, "success": proc.returncode == 0})
+        except Exception as e:
+            state["last_error"] = f"pip install 失败: {e}"
+            state["messages"] = [{"role": "tool", "content": f"安装失败: {e}", "tool_call_id": tool_call_id}]
+            logger.info("pip_install_failed", extra={"user_id": state.get("user_id", ""), "package": package_name, "error": str(e)[:200]})
+
+    else:
+        tool_name = pending.get("tool_name", "")
+        tool_args = pending.get("tool_args", {})
+        if tool_name:
+            result = ToolRegistry.execute(tool_name, tool_args, real_session, state.get("user_id", ""))
+            result_text = result.content if result.success else f"错误：{result.error or '未知错误'}"
+            state["messages"] = [{"role": "tool", "content": result_text[:4000], "tool_call_id": tool_call_id}]
+            state["last_error"] = "" if result.success else result.error
 
     state["pending_confirmation"] = {}
     state["confirmation_response"] = ""
@@ -238,54 +224,41 @@ def build_agent_graph(model, session, tools_list, memory_manager=None, checkpoin
 
     model_cache = _build_model_cache(model, tools_list)
 
+    deps = Deps(
+        model=model,
+        model_cache=model_cache,
+        tools=tools_list,
+        memory=memory_manager,
+        session=session,
+    )
+
     builder = StateGraph(AgentState)
 
-    deps = {
-        "session": session,
-        "tools": tools_list,
-        "memory": memory_manager,
-        "default_model": model,
-        "model_cache": model_cache,
-    }
-    builder.add_node("classify", partial(classify_node, **deps))
-    builder.add_node("planner", partial(planner_node, **deps))
-    builder.add_node("executor", partial(executor_node, **deps))
-    builder.add_node("self_heal", partial(self_heal_node, **deps))
-    builder.add_node("reflector", partial(reflector_node, **deps))
-    builder.add_node("respond", partial(respond_node, **deps))
-    builder.add_node("handle_meta", partial(handle_meta_node, **deps))
-    builder.add_node("handle_interrupt", partial(handle_interrupt_node, **deps))
-    builder.add_node("handle_confirm", partial(handle_confirm_node, **deps))
+    builder.add_node("classify", classify_node)
+    builder.add_node("react", react_node)
+    builder.add_node("handle_meta", handle_meta_node)
+    builder.add_node("handle_interrupt", handle_interrupt_node)
+    builder.add_node("handle_confirm", handle_confirm_node)
     builder.add_node("wait_user", wait_user_node)
 
     builder.set_entry_point("classify")
 
     builder.add_conditional_edges("classify", _after_classify, {
-        "planner": "planner",
+        "react": "react",
         "handle_meta": "handle_meta",
-        "handle_interrupt": "planner",
+        "handle_interrupt": "handle_interrupt",
         "resume_confirm": "handle_confirm",
-        "reflector": "reflector",
+        "respond": END,
     })
     builder.add_edge("handle_meta", END)
-    builder.add_edge("planner", "executor")
-    builder.add_conditional_edges("executor", _after_executor, {
-        "reflector": "reflector",
-        "self_heal": "self_heal",
-        "need_confirm": "wait_user",
-    })
-    builder.add_conditional_edges("self_heal", _after_self_heal, {
-        "retry": "executor",
-        "max_retries": "respond",
+    builder.add_edge("handle_interrupt", "react")
+    builder.add_conditional_edges("react", _after_react, {
+        "respond": END,
         "need_confirm": "wait_user",
     })
     builder.add_edge("wait_user", "handle_confirm")
-    builder.add_edge("handle_confirm", "executor")
-    builder.add_conditional_edges("reflector", _after_reflector, {
-        "respond": "respond",
-        "executor": "executor",
-        "planner": "planner",
-    })
-    builder.add_edge("respond", END)
+    builder.add_edge("handle_confirm", "react")
 
-    return builder.compile(checkpointer=checkpointer, interrupt_before=["wait_user"])
+    graph = builder.compile(checkpointer=checkpointer, interrupt_before=["wait_user"])
+    graph._deps = deps
+    return graph
