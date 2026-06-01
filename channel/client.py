@@ -8,13 +8,15 @@ import httpx
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+import config
+
 FIXED_AUTH_URL = "https://ilinkai.weixin.qq.com"
 ILINK_APP_ID = "bot"
 BOT_TYPE = "3"
 CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 DEFAULT_LONGPOLL_TIMEOUT_MS = 35_000
-DEFAULT_API_TIMEOUT_S = 15
-DEFAULT_UPLOAD_TIMEOUT_S = 60
+DEFAULT_API_TIMEOUT_S = config.ADV_API_TIMEOUT
+DEFAULT_UPLOAD_TIMEOUT_S = config.ADV_UPLOAD_TIMEOUT
 SESSION_EXPIRED_ERRCODE = -14
 
 UPLOAD_TYPE_IMAGE = 1
@@ -107,7 +109,7 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
         if media_ref and media_ref.get("encrypt_query_param"):
             eqp = media_ref["encrypt_query_param"]
             download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
-            resp = httpx.get(download_url, timeout=15, follow_redirects=True)
+            resp = httpx.get(download_url, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             ciphertext = resp.content
             aes_key_b64 = media_ref.get("aes_key", "")
@@ -129,7 +131,7 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
         headers = {}
         if session and "cdn.weixin" in url:
             headers = _build_headers(token=session.token)
-        resp = httpx.get(url, headers=headers, timeout=15, follow_redirects=True)
+        resp = httpx.get(url, headers=headers, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "image/jpeg")
         if "/" in content_type:
@@ -187,7 +189,7 @@ def download_cdn_file(url: str, session: SessionState | None = None,
         if media_ref and media_ref.get("encrypt_query_param"):
             eqp = media_ref["encrypt_query_param"]
             download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
-            resp = httpx.get(download_url, timeout=60, follow_redirects=True)
+            resp = httpx.get(download_url, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             ciphertext = resp.content
             aes_key_b64 = media_ref.get("aes_key", "")
@@ -199,7 +201,7 @@ def download_cdn_file(url: str, session: SessionState | None = None,
             headers = {}
             if session and "cdn.weixin" in url:
                 headers = _build_headers(token=session.token)
-            resp = httpx.get(url, headers=headers, timeout=60, follow_redirects=True)
+            resp = httpx.get(url, headers=headers, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             plaintext = resp.content
         else:

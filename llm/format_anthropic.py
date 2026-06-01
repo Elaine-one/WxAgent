@@ -1,6 +1,7 @@
 import json
 from typing import Any, Optional
 
+import config
 from llm.base import BaseLLM, LLMResponse, MessageFormat, ToolCall
 
 
@@ -44,7 +45,7 @@ class AnthropicFormat(MessageFormat):
 
         return client.messages.create(
             model=model,
-            max_tokens=2048,
+            max_tokens=config.ADV_MAX_TOKENS,
             system=system_text if system_text else None,
             messages=anthropic_msgs,
             tools=tool_schemas or None,

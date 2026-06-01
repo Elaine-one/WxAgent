@@ -1,14 +1,17 @@
-langgraph>=1.0,<2.0
-langchain>=1.2,<2.0
-langchain-core>=1.2,<2.0
-langchain-openai>=1.1,<2.0
-chromadb>=0.5,<0.7
+# Core dependencies
+httpx>=0.27
 openai>=1.0,<2.0
 anthropic>=0.39,<1.0
-apscheduler>=3.10,<4.0
-httpx>=0.27
 python-dotenv>=1.0
 pyyaml>=6.0
+cryptography>=41.0
+qrcode>=7.4
+langgraph>=1.0,<2.0
+langchain-core>=1.2,<2.0
+chromadb>=0.5,<0.7
+sentence-transformers>=2.0
+apscheduler>=3.10,<4.0
+sqlalchemy>=2.0
 jieba>=0.42
 duckduckgo-search>=6.0
 beautifulsoup4>=4.12
@@ -17,5 +20,21 @@ openpyxl>=3.1
 pdfplumber>=0.10
 python-docx>=1.1
 pyperclip>=1.8
-cryptography>=41.0
-qrcode>=7.4
+fastapi>=0.115
+pydantic>=2.0
+uvicorn>=0.30
+
+# Optional dependencies (missing = graceful degradation, not errors)
+# Audio transcription: SILK decode + Whisper STT
+# pilk>=0.3
+# faster-whisper>=1.0
+
+# OCR: local image text recognition
+# paddleocr>=2.7
+# paddlepaddle>=2.5
+
+# File indexer: real-time directory monitoring
+# watchdog>=3.0
+
+# Web snapshot: headless browser rendering
+# playwright>=1.40

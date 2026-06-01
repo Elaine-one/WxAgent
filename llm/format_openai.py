@@ -1,6 +1,7 @@
 import json
 from typing import Any, Optional
 
+import config
 from llm.base import BaseLLM, LLMResponse, MessageFormat, ToolCall
 
 
@@ -17,7 +18,7 @@ class OpenAIFormat(MessageFormat):
             messages=messages,
             tools=tool_schemas or None,
             tool_choice="auto" if tool_schemas else None,
-            max_tokens=2048,
+            max_tokens=config.ADV_MAX_TOKENS,
         )
 
     def parse_response(self, raw: Any) -> LLMResponse:

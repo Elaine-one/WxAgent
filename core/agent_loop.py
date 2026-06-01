@@ -1,3 +1,4 @@
+import logging
 import time
 
 import config
@@ -9,6 +10,8 @@ from channel.message import (
     find_recent_image_files,
     save_recent_images,
 )
+
+logger = logging.getLogger("wxagent.agent_loop")
 
 
 def agent_loop(model: llm.BaseLLM, user_id: str, msg,
@@ -49,6 +52,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
                 video_media_refs = [msg.video_media_ref]
 
     conv = conversations.get(user_id, [])
+    is_new_conv = not conv
     if not conv:
         system_prompt = config.SYSTEM_PROMPT
         if phase3_ctx and phase3_ctx.get("memory"):
@@ -59,6 +63,8 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
             except Exception:
                 pass
         conv = [{"role": "system", "content": system_prompt}]
+
+    logger.info("agent_loop_start", extra={"user_id": user_id, "is_new_conv": is_new_conv, "user_input": user_text[:80], "conv_len": len(conv)})
 
     recent_image_context = extract_recent_image_context(conv)
 
@@ -72,6 +78,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
         if saved_file_paths:
             enriched += f"\n\n[文件已保存到:\n" + "\n".join(saved_file_paths) + "]"
         conv.append({"role": "user", "content": enriched})
+        logger.info("agent_loop_file", extra={"user_id": user_id, "files": len(saved_file_paths)})
 
     elif voice_urls or voice_media_refs:
         sub_dir = str(config.WORKSPACE_DIR / "downloads" / "voice")
@@ -96,6 +103,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
             print(f"  🎤 语音转文字: {voice_text[:80]}")
         enriched = voice_text if voice_text and voice_text != "[语音消息]" else "[语音消息：转写失败]"
         conv.append({"role": "user", "content": enriched})
+        logger.info("agent_loop_voice", extra={"user_id": user_id, "has_text": bool(voice_text), "files": len(saved_voice_paths)})
 
     elif video_urls or video_media_refs:
         sub_dir = str(config.WORKSPACE_DIR / "downloads" / "videos")
@@ -106,6 +114,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
         if saved_video_paths:
             enriched += f"\n\n[视频文件路径: {', '.join(saved_video_paths)}]"
         conv.append({"role": "user", "content": enriched})
+        logger.info("agent_loop_video", extra={"user_id": user_id, "files": len(saved_video_paths)})
 
     elif image_urls or image_media_refs:
         b64_images = []
@@ -141,6 +150,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
                 content_parts.append({"type": "image_url", "image_url": {"url": b64}})
             conv.append({"role": "user", "content": content_parts})
             save_recent_images(b64_images, user_id)
+            logger.info("agent_loop_image_vision", extra={"user_id": user_id, "images": len(b64_images)})
         elif b64_images:
             vision_prompt_parts = [{"type": "text", "text": "请详细描述这张图片的所有内容，包括文字、物体、场景、颜色、布局等，越详细越好。"}]
             for b64 in b64_images:
@@ -160,8 +170,10 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
             if saved_paths:
                 enriched_text += f"\n\n[图片已保存到: {', '.join(saved_paths)}]"
             conv.append({"role": "user", "content": enriched_text})
+            logger.info("agent_loop_image_desc", extra={"user_id": user_id, "desc_len": len(image_desc) if image_desc else 0, "saved": len(saved_paths) if saved_paths else 0})
         else:
             conv.append({"role": "user", "content": f"[图片下载失败]\n{user_text}"})
+            logger.warning("agent_loop_image_fail", extra={"user_id": user_id})
     else:
         if recent_image_context:
             recent_image_files = find_recent_image_files()
@@ -173,6 +185,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
             conv.append({"role": "user", "content": user_text})
 
     for _round in range(config.MAX_TOOL_ROUNDS):
+        logger.info("agent_loop_llm_call", extra={"user_id": user_id, "round": _round, "conv_len": len(conv)})
         resp = model.chat(conv)
 
         if not resp.tool_calls:
@@ -181,18 +194,24 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
             conv.append(msg_dict)
             trim_history(conv, config.MAX_HISTORY)
             conversations[user_id] = conv
+            logger.info("agent_loop_final_response", extra={"user_id": user_id, "round": _round, "text_len": len(resp.text), "text_preview": resp.text[:200]})
             return resp.text
 
-        print(f"  🔧 调用 {len(resp.tool_calls)} 个工具: {[tc.name for tc in resp.tool_calls]}")
+        tool_names = [tc.name for tc in resp.tool_calls]
+        print(f"  🔧 调用 {len(resp.tool_calls)} 个工具: {tool_names}")
+        logger.info("agent_loop_tool_calls", extra={"user_id": user_id, "round": _round, "tools": tool_names})
         conv.append(model.wrap_tool_call(resp.tool_calls, resp.extra_fields))
 
         for tc in resp.tool_calls:
             result = tools.execute(tc.name, tc.args, state, user_id)
-            if len(result) > 4000:
-                result = result[:4000] + "\n...(结果已截断)"
+            if len(result) > config.ADV_TOOL_RESULT_MAX_CHARS:
+                result = result[:config.ADV_TOOL_RESULT_MAX_CHARS] + "\n...(结果已截断)"
             conv.append(model.wrap_tool_result(tc, result))
             print(f"  ✓ {tc.name} → {len(result)} chars")
+            logger.info("agent_loop_tool_detail", extra={"user_id": user_id, "round": _round, "tool": tc.name, "tool_args": str(tc.args)[:200]})
+            logger.info("agent_loop_tool_result", extra={"user_id": user_id, "tool": tc.name, "success": True, "result_len": len(result), "result_preview": result[:200]})
 
+    logger.info("agent_loop_max_rounds", extra={"user_id": user_id, "rounds": config.MAX_TOOL_ROUNDS})
     conv.append({"role": "user", "content": "请基于以上工具调用结果给出最终回复。"})
     final = model.chat(conv)
     final_msg = {"role": "assistant", "content": final.text}
@@ -200,6 +219,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
     conv.append(final_msg)
     trim_history(conv, config.MAX_HISTORY)
     conversations[user_id] = conv
+    logger.info("agent_loop_done", extra={"user_id": user_id, "text_len": len(final.text), "task_complete": True, "response_len": len(final.text)})
     return final.text
 
 

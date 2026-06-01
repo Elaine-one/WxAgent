@@ -1,6 +1,7 @@
 import json
 import logging
 
+import config
 from memory.short_term import ShortTermMemory
 
 try:
@@ -98,9 +99,9 @@ class MemoryManager:
         if user_input and self.retriever:
             try:
                 relevant = self.retriever.search(
-                    query=user_input, user_id=user_id, top_k=3,
+                    query=user_input, user_id=user_id, top_k=config.ADV_MEMORY_SEARCH_TOP_K,
                 )
-                if relevant and relevant[0]["score"] > 0.5:
+                if relevant and relevant[0]["score"] > config.ADV_RELEVANCE_THRESHOLD:
                     hints.append(f"相关记忆: {relevant[0]['content'][:100]}")
             except Exception:
                 pass
@@ -118,7 +119,7 @@ class MemoryManager:
             from llm import create_llm
             from config import LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL
 
-            llm = create_llm(LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL, "deepseek-chat")
+            llm = create_llm(LLM_PROVIDER, LLM_API_KEY, LLM_BASE_URL, config.ADV_PREFERENCE_EXTRACT_MODEL)
             prompt = PREFERENCE_EXTRACT_PROMPT.format(message=message, response=response)
             resp = llm.chat([{"role": "user", "content": prompt}])
 
@@ -127,7 +128,7 @@ class MemoryManager:
                 text = text.split("\n", 1)[-1].rsplit("```", 1)[0]
             result = json.loads(text)
 
-            if result and result.get("preference_key") and result.get("confidence", 0) >= 0.6:
+            if result and result.get("preference_key") and result.get("confidence", 0) >= config.ADV_PREFERENCE_CONFIDENCE_THRESHOLD:
                 self.long_term.store_preference(
                     user_id, result["preference_key"], result["preference_value"],
                 )

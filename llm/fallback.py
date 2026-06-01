@@ -1,12 +1,13 @@
+import config
 from llm.base import BaseLLM
 
 
 class LLMFallback:
 
-    def __init__(self, primary: BaseLLM, fallback: BaseLLM, timeout: float = 30.0):
+    def __init__(self, primary: BaseLLM, fallback: BaseLLM, timeout: float = None):
         self.primary = primary
         self.fallback = fallback
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else config.ADV_LLM_FALLBACK_TIMEOUT
         self._fallback_count = 0
 
     def chat(self, messages, **kwargs):

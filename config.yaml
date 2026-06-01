@@ -10,7 +10,6 @@ model_router:
       provider: openai
       base_url: https://api.openai.com/v1
   task_overrides:
-    # planning 使用强推理模型。如用 Claude 需设 provider: anthropic 且 pip install anthropic
     planning:
       model: deepseek-chat
       provider: openai
@@ -23,226 +22,328 @@ model_router:
       input: 0.28
       output: 0.88
     gpt-4o:
-      input: 2.50
-      output: 10.00
+      input: 2.5
+      output: 10.0
     claude-sonnet-4-6:
-      input: 3.00
-      output: 15.00
-
+      input: 3.0
+      output: 15.0
 security:
   dev_mode: false
   risk_levels:
     safe:
-      - dir
-      - ls
-      - type
-      - echo
-      - netstat
-      - systeminfo
-      - where
-      - python --version
-      - git status
-      - git log
-      - git diff
-      - tasklist
-      - whoami
-      - ipconfig
-      - ping
+    - dir
+    - ls
+    - type
+    - echo
+    - netstat
+    - systeminfo
+    - where
+    - python --version
+    - git status
+    - git log
+    - git diff
+    - tasklist
+    - whoami
+    - ipconfig
+    - ping
     caution:
-      - pip install
-      - pip uninstall
-      - git push
-      - git fetch
-      - git pull
-      - git add
-      - git commit
-      - python -c
-      - python -m http.server
-      - npm install
+    - pip install
+    - pip uninstall
+    - git push
+    - git fetch
+    - git pull
+    - git add
+    - git commit
+    - python -c
+    - python -m http.server
+    - npm install
     dangerous:
-      - del
-      - rm
-      - rd
-      - rmdir
-      - taskkill
-      - kill
-      - shutdown
-      - restart
-      - reg
-      - format
-      - fdisk
-      - chkdsk
-      - sfc
-      - bcdedit
-      - net user
-      - wmic
-      - schtasks
-      - mshta
-      - certutil
-      - bitsadmin
-      - powershell -enc
-      - cmd /c
+    - del
+    - rm
+    - rd
+    - rmdir
+    - taskkill
+    - kill
+    - shutdown
+    - restart
+    - reg
+    - format
+    - fdisk
+    - chkdsk
+    - sfc
+    - bcdedit
+    - net user
+    - wmic
+    - schtasks
+    - mshta
+    - certutil
+    - bitsadmin
+    - powershell -enc
+    - cmd /c
   path_sandbox:
     write_roots:
-      - workspace/
-      - workspace/output/
-      - workspace/temp/
-      - workspace/scripts/
-      - workspace/downloads/
+    - workspace/
+    - workspace/output/
+    - workspace/temp/
+    - workspace/scripts/
+    - workspace/downloads/
     read_roots:
-      - ./
-      - ~/Desktop
-      - ~/Downloads
-      - ~/Documents
+    - ./
+    - ~/Desktop
+    - ~/Downloads
+    - ~/Documents
     denied_patterns:
-      - .ssh
-      - .gnupg
-      - .env
-      - AppData/Roaming/Microsoft
-      - NTUSER.DAT
-
+    - .ssh
+    - .gnupg
+    - .env
+    - AppData/Roaming/Microsoft
+    - NTUSER.DAT
 ai_reviewer:
   enabled: true
   review_levels:
-    - caution
+  - caution
   model: deepseek-chat
   max_command_length: 500
-
 workspace:
   dir: workspace
   subdirs:
-    - downloads
-    - temp
-    - output
-    - scripts
-    - data
+  - downloads
+  - temp
+  - output
+  - scripts
+  - data
   venv_packages:
     basic:
-      - pandas
-      - numpy
-      - matplotlib
-      - openpyxl
-      - pdfplumber
-      - python-docx
-      - Pillow
-      - requests
-      - beautifulsoup4
-      - lxml
-      - chardet
+    - pandas
+    - numpy
+    - matplotlib
+    - openpyxl
+    - pdfplumber
+    - python-docx
+    - Pillow
+    - requests
+    - beautifulsoup4
+    - lxml
+    - chardet
     full:
-      - faster-whisper
-      - paddleocr
-      - paddlepaddle
-      - ffmpeg-python
-      - yt-dlp
-
+    - faster-whisper
+    - paddleocr
+    - paddlepaddle
+    - ffmpeg-python
+    - yt-dlp
 limits:
   max_llm_calls_per_task: 10
   max_history: 20
-  max_tokens_per_day: 500000
   max_retries_per_step: 3
   python_timeout_seconds: 60
   python_max_output_bytes: 50000
   shell_timeout_seconds: 30
-
 indexer:
-  enabled: false  # 是否启用后台文件索引（需 ChromaDB + SentenceTransformer，基础模式建议关闭）
+  enabled: false
   watch_dirs:
-    - ~/Desktop
-    - ~/Downloads
-    - ~/Documents
+  - ~/Desktop
+  - ~/Downloads
+  - ~/Documents
   supported_types:
-    - .txt
-    - .md
-    - .pdf
-    - .docx
-    - .pptx
-    - .xlsx
-    - .py
-    - .js
-    - .csv
+  - .txt
+  - .md
+  - .pdf
+  - .docx
+  - .pptx
+  - .xlsx
+  - .py
+  - .js
+  - .csv
   idle_cpu_threshold: 20
   scan_interval_seconds: 300
   max_document_chars: 8000
   use_watchdog: true
-
 retriever:
   vector_weight: 0.5
   keyword_weight: 0.3
   time_decay_weight: 0.2
   time_decay_half_life_days: 30
   default_scope:
-    - files
-    - facts
+  - files
+  - facts
   default_top_k: 10
-
 file_organize:
   rules:
     by_type:
-      images: [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp"]
-      documents: [".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".doc"]
-      videos: [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv"]
-      audio: [".mp3", ".wav", ".flac", ".aac", ".ogg"]
-      archives: [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"]
-      code: [".py", ".js", ".ts", ".java", ".cpp", ".go", ".rs"]
+      images:
+      - .jpg
+      - .jpeg
+      - .png
+      - .gif
+      - .bmp
+      - .svg
+      - .webp
+      documents:
+      - .pdf
+      - .docx
+      - .xlsx
+      - .pptx
+      - .txt
+      - .md
+      - .doc
+      videos:
+      - .mp4
+      - .avi
+      - .mkv
+      - .mov
+      - .wmv
+      - .flv
+      audio:
+      - .mp3
+      - .wav
+      - .flac
+      - .aac
+      - .ogg
+      archives:
+      - .zip
+      - .rar
+      - .7z
+      - .tar
+      - .gz
+      - .bz2
+      code:
+      - .py
+      - .js
+      - .ts
+      - .java
+      - .cpp
+      - .go
+      - .rs
     by_date:
-      format: "%Y-%m"
+      format: '%Y-%m'
     by_ext:
       group_by: suffix
-
 system_control:
   actions:
     sleep:
-      command: "rundll32 powrprof.dll,SetSuspendState 0,1,0"
+      command: rundll32 powrprof.dll,SetSuspendState 0,1,0
       risk: dangerous
-      description: "休眠电脑"
+      description: 休眠电脑
+      shell: cmd
     lock:
-      command: "rundll32 user32.dll,LockWorkStation"
+      command: rundll32 user32.dll,LockWorkStation
       risk: dangerous
-      description: "锁屏"
+      description: 锁屏
+      shell: cmd
     volume_up:
-      command: '(New-Object -ComObject WScript.Shell).SendKeys([char]175)'
+      command: (New-Object -ComObject WScript.Shell).SendKeys([char]175)
       risk: safe
-      description: "音量增大"
+      description: 音量增大
       shell: powershell
     volume_down:
-      command: '(New-Object -ComObject WScript.Shell).SendKeys([char]174)'
+      command: (New-Object -ComObject WScript.Shell).SendKeys([char]174)
       risk: safe
-      description: "音量减小"
+      description: 音量减小
       shell: powershell
     mute:
-      command: '(New-Object -ComObject WScript.Shell).SendKeys([char]173)'
+      command: (New-Object -ComObject WScript.Shell).SendKeys([char]173)
       risk: safe
-      description: "静音切换"
+      description: 静音切换
       shell: powershell
   app_whitelist:
-    code: "code"
-    vscode: "code"
-    chrome: "start chrome"
-    firefox: "start firefox"
-    notepad: "notepad"
-    calculator: "calc"
-    explorer: "explorer"
+    code: code
+    vscode: code
+    chrome: start chrome
+    firefox: start firefox
+    edge: start msedge
+    notepad: notepad
+    calculator: calc
+    explorer: explorer
+advanced:
+  max_tokens: 2048
+  max_chars: 480
+  debounce_delay: 3.0
+  max_sessions: 100
+  session_ttl_seconds: 86400
+  messages_window: 50
+  short_term_max_messages: 50
+  long_term_max_messages: 20
+  embedding_model: BAAI/bge-small-zh
+  llm_fallback_timeout: 30.0
+  aria2_rpc_url: http://localhost:6800/jsonrpc
+  github_mirrors:
+  - https://ghfast.top
+  - https://gh-proxy.com
+  - https://ghproxy.cc
+  whisper_model: base
+  whisper_device: cpu
+  whisper_compute_type: int8
+  whisper_cloud_model: whisper-1
+  ocr_lang: ch
+  search_max_results: 5
+  web_fetch_max_chars: 8000
+  io_pool_max_workers: 8
+  cpu_pool_max_workers: 2
+  pip_install_timeout: 120
+  video_download_timeout: 3600
+  http_download_timeout: 180
+  file_size_limit_mb: 50
+  preference_extract_model: deepseek-chat
+  ocr_fallback_model: gpt-4o
+  bubble_send_interval: 0.3
+  web_fetch_timeout: 15
+  aria2_rpc_timeout: 5
+  silk_decode_timeout: 30
+  ffmpeg_audio_extract_timeout: 300
+  ffmpeg_sample_rate: 24000
+  cdn_download_timeout: 60
+  image_download_timeout: 15
+  api_timeout: 15
+  upload_timeout: 60
+  file_read_max_chars: 100000
+  tool_result_max_chars: 4000
+  code_total_output_limit: 100000
+  memory_search_top_k: 3
+  relevance_threshold: 0.5
+  preference_confidence_threshold: 0.6
+prompts:
+  system_prompt: 你是一个通过微信与用户聊天的 AI 助手，运行在用户的个人电脑上。你可以访问本地文件系统。
+  classify_prompt: '判断用户消息的类型，回复 JSON:
 
-scenarios:
-  work_mode:
-    description: "工作模式"
-    actions:
-      - tool: open_app
-        args: {app_name: "code"}
-      - tool: open_app
-        args: {app_name: "chrome"}
-      - tool: system_action
-        args: {action: "volume_down"}
-  meeting_mode:
-    description: "会议模式"
-    actions:
-      - tool: system_action
-        args: {action: "mute"}
-      - tool: system_action
-        args: {action: "lock"}
-  focus_mode:
-    description: "专注模式"
-    actions:
-      - tool: system_action
-        args: {action: "volume_down"}
+    {{"type": "meta"|"confirm"|"new_task"|"interrupt"}}
+
+    - meta: 元命令（/reset、/help、/status、/tasks、/usage）
+
+    - confirm: 对确认请求的回复（Y/N/是/否/确认/取消等）
+
+    - interrupt: 当前有任务在执行，用户想打断/纠正/放弃
+
+    - new_task: 其他一切新请求
+
+    当前是否有正在执行的任务: {has_active_task}
+
+    用户消息: {user_input}'
+  vision_prompt: 请详细描述这张图片的内容，包括文字、物体、场景等所有可见信息。
+  preference_extract_prompt: '从以下用户消息中提取偏好信息。如果用户表达了明确的偏好，返回 JSON：
+
+    {{"preference_key": "...", "preference_value": "...", "confidence": 0.0~1.0}}
+
+
+    偏好可以是任何类型：回复风格、常用目录、文件命名习惯、语言偏好等。
+
+    如果没有明显偏好，返回空 JSON {{}}。
+
+
+    用户消息: {message}
+
+    助手回复: {response}'
+  ai_safety_prompt: '判断以下命令是否有恶意意图。只回复JSON。
+
+    {{"verdict":"allow"|"deny"|"ask_user","reason":"...","risk_score":0.0~1.0}}
+
+
+    判断依据:
+
+    - allow: 正常操作，无安全风险
+
+    - deny: 明确恶意（数据窃取、系统破坏、持久化后门）
+
+    - ask_user: 无法确定，升级人工判断
+
+
+    上下文: {context}'

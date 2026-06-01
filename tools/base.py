@@ -1,5 +1,32 @@
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable
+
+
+class ToolType(Enum):
+    BUILTIN = "builtin"
+    SKILL = "skill"
+    MCP = "mcp"
+    SYSTEM_MODE = "mode"
+    THIRD_PARTY = "external"
+
+
+@dataclass
+class ToolMeta:
+    name: str
+    type: ToolType
+    description: str = ""
+    version: str = "1.0.0"
+    author: str = ""
+    tags: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    enabled: bool = True
+    priority: int = 100
+    config_schema: dict | None = None
+    source_path: str = ""
+    triggers: list[str] = field(default_factory=list)
+    actions: list[dict] = field(default_factory=list)
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

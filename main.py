@@ -41,7 +41,7 @@ def main():
     phase3_ctx = init_phase3()
     atexit.register(_cleanup, phase3_ctx)
 
-    print(f"LLM: {config.LLM_PROVIDER} | 模型: {config.LLM_MODEL} | 工具: {len(tools.ALL_TOOLS)} 个")
+    print(f"LLM: {config.LLM_PROVIDER} | 模型: {config.LLM_MODEL} | Agent后端: {config.AGENT_BACKEND} | 工具: {len(tools.ALL_TOOLS)} 个")
     if config.LLM_PROVIDER == "openai":
         print(f"地址: {config.LLM_BASE_URL}")
 
@@ -85,7 +85,7 @@ def main():
     pending_msgs: dict[str, list] = {}
     last_msg_time: dict[str, float] = {}
     last_processed: dict[str, tuple[str, float]] = {}
-    DEBOUNCE_DELAY = 3.0
+    DEBOUNCE_DELAY = config.ADV_DEBOUNCE_DELAY
 
     while config.running:
         try:
