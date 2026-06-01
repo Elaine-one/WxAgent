@@ -5,9 +5,10 @@ from pathlib import Path
 
 import yaml
 
+import config
 from config import EMBEDDING_MODEL_PATH, PROJECT_ROOT, WORKSPACE_DIR
 
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else "BAAI/bge-small-zh"
+_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
 _embedding_fn = None  # 延迟加载，避免 import 时触发模型下载/加载
 
 

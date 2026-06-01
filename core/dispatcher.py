@@ -13,8 +13,8 @@ logger = logging.getLogger("wxagent.dispatcher")
 
 
 class Dispatcher:
-    MAX_SESSIONS = 100
-    SESSION_TTL_SECONDS = 3600 * 24
+    MAX_SESSIONS = config.ADV_MAX_SESSIONS
+    SESSION_TTL_SECONDS = config.ADV_SESSION_TTL_SECONDS
 
     def __init__(self, graph, session: SessionState, memory=None):
         self.graph = graph
@@ -178,7 +178,7 @@ class Dispatcher:
         segments = split_for_wechat(text)
         for seg in segments:
             send_message(self.session, uid, seg)
-            time.sleep(0.3)
+            time.sleep(config.ADV_BUBBLE_SEND_INTERVAL)
 
     def _new_state(self, uid: str) -> dict:
         return {
@@ -194,7 +194,7 @@ class Dispatcher:
             "msg_type": "",
             "final_response": "",
             "task_complete": False,
-            "messages_window": 50,
+            "messages_window": config.ADV_MESSAGES_WINDOW,
             "user_preferences": {},
             "active_tools": [],
             "cost": {"llm_calls": 0, "total_tokens": 0, "estimated_usd": 0.0},

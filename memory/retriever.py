@@ -4,10 +4,11 @@ import time
 import chromadb
 import yaml
 
+import config
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from config import EMBEDDING_MODEL_PATH, PROJECT_ROOT, WORKSPACE_DIR
 
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else "BAAI/bge-small-zh"
+_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
 _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_local_model)
 
 logger = logging.getLogger(__name__)

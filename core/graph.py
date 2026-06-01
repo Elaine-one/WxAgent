@@ -196,6 +196,30 @@ def handle_confirm_node(state: AgentState, config) -> AgentState:
             state["messages"] = [{"role": "tool", "content": f"安装失败: {e}", "tool_call_id": tool_call_id}]
             logger.info("pip_install_failed", extra={"user_id": state.get("user_id", ""), "package": package_name, "error": str(e)[:200]})
 
+    elif confirm_type == "skill_action":
+        skill_name = pending.get("skill_name", "")
+        tool_name = pending.get("tool_name", "")
+        tool_args = pending.get("tool_args", {})
+        pending_actions = pending.get("pending_actions", [])
+        results = []
+        if tool_name:
+            result = ToolRegistry.execute(tool_name, tool_args, real_session, state.get("user_id", ""))
+            status = "✓" if result.success else "✗"
+            content = result.display or (result.content[:80] if result.content else "")
+            results.append(f"{status} {tool_name}: {content}")
+        for action in pending_actions:
+            a_tool_name = action.get("tool")
+            a_tool_args = action.get("args", {})
+            if a_tool_name:
+                result = ToolRegistry.execute(a_tool_name, a_tool_args, real_session, state.get("user_id", ""))
+                status = "✓" if result.success else "✗"
+                content = result.display or (result.content[:80] if result.content else "")
+                results.append(f"{status} {a_tool_name}: {content}")
+        result_text = f"Skill '{skill_name}' executed:\n" + "\n".join(results)
+        state["messages"] = [{"role": "tool", "content": result_text[:4000], "tool_call_id": tool_call_id}]
+        state["last_error"] = ""
+        logger.info("skill_action_confirmed", extra={"user_id": state.get("user_id", ""), "skill": skill_name, "tool": tool_name})
+
     else:
         tool_name = pending.get("tool_name", "")
         tool_args = pending.get("tool_args", {})

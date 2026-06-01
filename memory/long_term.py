@@ -1,9 +1,10 @@
 import time
 
+import config
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 from config import EMBEDDING_MODEL_PATH, WORKSPACE_DIR
 
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else "BAAI/bge-small-zh"
+_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
 _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_local_model)
 
 
@@ -90,12 +91,13 @@ class LongTermMemory:
             return {}
 
     def store_conversation(self, user_id: str, messages: list[dict],
-                           max_messages: int = 20):
+                           max_messages: int = None):
         if not self._available:
             return
+        _max = max_messages if max_messages is not None else config.ADV_LONG_TERM_MAX_MESSAGES
         text = "\n".join(
             f"[{m['role']}]: {str(m.get('content', ''))[:300]}"
-            for m in messages[-max_messages:]
+            for m in messages[-_max:]
         )
         ts = int(time.time())
         self.conversations.upsert(

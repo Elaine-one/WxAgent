@@ -1,6 +1,8 @@
 import re
 
-MAX_CHARS = 480
+import config
+
+MAX_CHARS = config.ADV_MAX_CHARS
 SPLIT_RE = re.compile(r'([。！？\n]|\.{3,}|——)')
 
 

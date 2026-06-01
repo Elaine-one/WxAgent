@@ -1,6 +1,9 @@
+import config
+
+
 class ShortTermMemory:
-    def __init__(self, max_messages: int = 50):
-        self.max_messages = max_messages
+    def __init__(self, max_messages: int = None):
+        self.max_messages = max_messages if max_messages is not None else config.ADV_SHORT_TERM_MAX_MESSAGES
 
     def maybe_compress(self, messages: list[dict], model) -> list[dict]:
         if len(messages) <= self.max_messages:

@@ -5,6 +5,8 @@ from concurrent.futures import Future, ThreadPoolExecutor, ProcessPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 
+import config
+
 
 class TaskStatus(Enum):
     QUEUED = "queued"
@@ -29,8 +31,8 @@ class TaskInfo:
 
 class AsyncTaskManager:
     def __init__(self):
-        self.io_pool = ThreadPoolExecutor(max_workers=8)
-        self.cpu_pool = ProcessPoolExecutor(max_workers=2)
+        self.io_pool = ThreadPoolExecutor(max_workers=config.ADV_IO_POOL_MAX_WORKERS)
+        self.cpu_pool = ProcessPoolExecutor(max_workers=config.ADV_CPU_POOL_MAX_WORKERS)
         self._tasks: dict[str, TaskInfo] = {}
         self._futures: dict[str, Future] = {}
         self._on_complete_callback: Callable | None = None

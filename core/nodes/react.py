@@ -292,7 +292,9 @@ def react_node(state: AgentState, config) -> AgentState:
             print(f"  🔧 调用 {len(tool_names)} 个工具: {tool_names}")
             logger.info("react_tool_calls", extra=_log(round=_round, tools=tool_names))
             for tc in resp.tool_calls:
-                logger.info("react_tool_detail", extra=_log(round=_round, tool=tc.name, tool_args=str(tc.args)[:200]))
+                tc_meta = ToolRegistry.get_meta(tc.name)
+                tc_type = tc_meta.type if tc_meta else ""
+                logger.info("react_tool_detail", extra=_log(round=_round, tool=tc.name, tool_args=str(tc.args)[:200], tool_type=tc_type))
         else:
             print(f"  → 已回复 ({len(resp.text)} chars)")
             logger.info("react_final_response", extra=_log(round=_round, text_len=len(resp.text), text_preview=resp.text[:200]))
