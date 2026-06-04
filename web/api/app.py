@@ -6,7 +6,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from web.api.routes import config, service, status, tools
-from tools.registry import ToolRegistry
+from web.api.routes.mcp import router as mcp_router
+from web.api.routes.feishu import router as feishu_router
 from observability.logger import get_logger
 
 app = FastAPI(title="WeChat-Claude Management Panel", version="1.0.0")
@@ -24,6 +25,8 @@ app.include_router(service.router)
 app.include_router(status.router)
 app.include_router(tools.router)
 app.include_router(tools.skills_router)
+app.include_router(mcp_router)
+app.include_router(feishu_router)
 
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
@@ -31,7 +34,6 @@ FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 @app.on_event("startup")
 async def startup_event():
     get_logger()
-    ToolRegistry.discover()
 
 
 @app.get("/api/health")

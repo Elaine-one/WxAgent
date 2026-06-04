@@ -162,7 +162,7 @@ export default function ToolRegistry() {
                 <Statistic
                   title="内置工具"
                   value={stats.by_type.builtin || 0}
-                  suffix={`/ ${stats.by_type.skill || 0} Skills / ${stats.by_type.mode || 0} Modes`}
+                  suffix={`/ ${stats.by_type.skill || 0} Skills / ${stats.by_type.mcp || 0} MCP`}
                 />
               </Card>
             </Col>

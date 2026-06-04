@@ -5,11 +5,8 @@ import chromadb
 import yaml
 
 import config
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-from config import EMBEDDING_MODEL_PATH, PROJECT_ROOT, WORKSPACE_DIR
-
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
-_embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_local_model)
+from config import PROJECT_ROOT, WORKSPACE_DIR
+from memory.embedding import get_embedding_fn
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +47,7 @@ class MemoryRetriever:
 
         for col_name in scope:
             try:
-                col = self.client.get_collection(col_name, embedding_function=_embedding_fn)
+                col = self.client.get_collection(col_name, embedding_function=get_embedding_fn())
                 where_filter = {"user_id": user_id} if user_id else None
                 r = col.query(
                     query_texts=[query], n_results=top_k,

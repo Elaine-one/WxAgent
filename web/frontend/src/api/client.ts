@@ -30,4 +30,35 @@ export const getLogs = (params?: { lines?: number; key_only?: boolean }) =>
 export const generateSkill = (data: { description: string }) =>
   api.post('/skills/generate', data).then(r => r.data)
 
+export const getMcpStatus = () =>
+  api.get('/mcp/status').then(r => r.data)
+
+export const getMcpTools = () =>
+  api.get('/mcp/tools').then(r => r.data)
+
+export const connectMcpServer = (name: string) =>
+  api.post(`/mcp/connect/${name}`).then(r => r.data)
+
+export const disconnectMcpServer = (name: string) =>
+  api.post(`/mcp/disconnect/${name}`).then(r => r.data)
+
+export const toggleMcp = (enabled: boolean) =>
+  api.post('/mcp/toggle', null, { params: { enabled } }).then(r => r.data)
+
+// Feishu
+export const getFeishuStatus = () =>
+  api.get('/feishu/status').then(r => r.data)
+
+export const testFeishuConnection = () =>
+  api.post('/feishu/test-connection').then(r => r.data)
+
+export const getFeishuDocuments = (folderToken?: string) =>
+  api.get('/feishu/documents', { params: folderToken ? { folder_token: folderToken } : {} }).then(r => r.data)
+
+export const getFeishuBitables = () =>
+  api.get('/feishu/bitables').then(r => r.data)
+
+export const deleteFeishuDocument = (fileToken: string, fileType: string) =>
+  api.delete(`/feishu/documents/${fileToken}`, { params: { file_type: fileType } }).then(r => r.data)
+
 export default api

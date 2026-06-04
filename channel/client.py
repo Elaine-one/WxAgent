@@ -88,6 +88,9 @@ class InboundMessage:
     voice_media_ref: dict = field(default_factory=dict)
     video_url: str = ""
     video_media_ref: dict = field(default_factory=dict)
+    # 多语音合并时保留完整列表
+    _all_voice_urls: list = field(default_factory=list)
+    _all_voice_media_refs: list = field(default_factory=list)
 
 
 @dataclass

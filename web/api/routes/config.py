@@ -1,7 +1,6 @@
 import time
 
 from fastapi import APIRouter, HTTPException
-import httpx
 
 from web.api.models.schemas import TestLLMRequest, TestLLMResponse
 from web.api.services import config_service
@@ -69,35 +68,12 @@ async def _do_test_llm(provider: str, api_key: str, base_url: str, model: str) -
         if not api_key:
             return TestLLMResponse(success=False, message="API Key 未配置", model=model, latency_ms=0)
 
-        if provider == "anthropic":
-            headers = {
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": 64,
-                "messages": [{"role": "user", "content": "Hi"}],
-            }
-            url = (base_url or "https://api.anthropic.com").rstrip("/") + "/v1/messages"
-        else:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "model": model,
-                "max_tokens": 64,
-                "messages": [{"role": "user", "content": "Hi"}],
-            }
-            url = (base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        from llm import create_llm
+        llm_client = create_llm(provider, api_key, base_url, model)
+        resp = llm_client.chat([{"role": "user", "content": "Hi"}])
+        latency_ms = (time.time() - start) * 1000
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            latency_ms = (time.time() - start) * 1000
-
-        if resp.status_code == 200:
+        if resp.text:
             return TestLLMResponse(
                 success=True,
                 message="Connection successful",
@@ -107,7 +83,7 @@ async def _do_test_llm(provider: str, api_key: str, base_url: str, model: str) -
         else:
             return TestLLMResponse(
                 success=False,
-                message=f"HTTP {resp.status_code}: {resp.text[:200]}",
+                message="Empty response from LLM",
                 model=model,
                 latency_ms=round(latency_ms, 1),
             )
@@ -146,4 +122,6 @@ async def test_llm_current():
 
 @router.post("/reload")
 def reload_config():
+    """重新加载配置文件。"""
+    config_service.reload()
     return config_service.get_all_config()

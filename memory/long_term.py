@@ -1,11 +1,8 @@
 import time
 
 import config
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-from config import EMBEDDING_MODEL_PATH, WORKSPACE_DIR
-
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
-_embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_local_model)
+from config import WORKSPACE_DIR
+from memory.embedding import get_embedding_fn
 
 
 class LongTermMemory:
@@ -20,13 +17,13 @@ class LongTermMemory:
                 settings=Settings(anonymized_telemetry=False),
             )
             self.facts = self.client.get_or_create_collection(
-                "facts", embedding_function=_embedding_fn,
+                "facts", embedding_function=get_embedding_fn(),
             )
             self.prefs = self.client.get_or_create_collection(
-                "preferences", embedding_function=_embedding_fn,
+                "preferences", embedding_function=get_embedding_fn(),
             )
             self.conversations = self.client.get_or_create_collection(
-                "conversations", embedding_function=_embedding_fn,
+                "conversations", embedding_function=get_embedding_fn(),
             )
             self._available = True
         except Exception:

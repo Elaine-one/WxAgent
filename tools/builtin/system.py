@@ -1,3 +1,4 @@
+import logging
 import re
 import subprocess
 
@@ -5,6 +6,8 @@ import config
 from config import WORKSPACE_DIR, SHELL_TIMEOUT
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
+
+logger = logging.getLogger("wxagent.tools.system")
 
 
 TOOL_META = ToolMeta(
@@ -45,6 +48,66 @@ def _run_shell(command: str, state=None, user_id: str = "", _skip_risk_check: bo
             )
 
         if risk == RiskLevel.CAUTION:
+            # AI 审查：如果启用且 caution 在审查级别中，调用 AI 判断
+            try:
+                from security.ai_reviewer import is_enabled, get_review_levels
+                if is_enabled() and "caution" in get_review_levels():
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+
+                    async def _do_review():
+                        from security.ai_reviewer import review_command
+                        return await review_command(command)
+
+                    if loop and loop.is_running():
+                        import concurrent.futures
+                        with concurrent.futures.ThreadPoolExecutor() as pool:
+                            ai_result = pool.submit(asyncio.run, _do_review()).result(timeout=15)
+                    else:
+                        ai_result = asyncio.run(_do_review())
+
+                    verdict = ai_result.get("verdict", "ask_user")
+                    ai_reason = ai_result.get("reason", "")
+                    ai_score = ai_result.get("risk_score", 0.5)
+
+                    if verdict == "deny":
+                        audit_logger.log(user_id, "run_shell", risk,
+                                         {"command": command, "ai_verdict": verdict, "ai_reason": ai_reason},
+                                         "blocked_by_ai_reviewer")
+                        return ToolResult(
+                            success=False,
+                            error=f"AI 安全审查拒绝执行: {ai_reason}",
+                            requires_confirmation=True,
+                            confirmation_detail={
+                                "type": "ai_denied",
+                                "command": command,
+                                "risk_level": "caution",
+                                "reason": ai_reason,
+                                "risk_score": ai_score,
+                            },
+                        )
+                    elif verdict == "ask_user":
+                        audit_logger.log(user_id, "run_shell", risk,
+                                         {"command": command, "ai_verdict": verdict}, "ai_ask_user")
+                        return ToolResult(
+                            success=False,
+                            error=f"AI 安全审查建议确认: {ai_reason}",
+                            requires_confirmation=True,
+                            confirmation_detail={
+                                "type": "ai_ask_user",
+                                "command": command,
+                                "risk_level": "caution",
+                                "reason": ai_reason,
+                                "risk_score": ai_score,
+                            },
+                        )
+                    # verdict == "allow" → 继续执行
+            except Exception as e:
+                logger.warning("AI 审查调用失败，降级为关键词结果: %s", e)
+
             audit_logger.log(user_id, "run_shell", risk, {"command": command},
                             "caution_dev_auto" if is_dev_mode() else "caution_executed")
 

@@ -27,6 +27,7 @@ class TaskInfo:
     error: str = ""
     progress: float = 0.0
     created_at: float = field(default_factory=time.time)
+    notify: str | None = None
 
 
 class AsyncTaskManager:
@@ -36,13 +37,15 @@ class AsyncTaskManager:
         self._tasks: dict[str, TaskInfo] = {}
         self._futures: dict[str, Future] = {}
         self._on_complete_callback: Callable | None = None
+        self._on_notify_callback: Callable | None = None
         self._lock = threading.Lock()
 
     def submit(self, task_type: str, params: dict, user_id: str,
-               func: Callable) -> str:
+               func: Callable, notify: str | None = None) -> str:
         task_id = f"task_{int(time.time())}_{len(self._tasks)}"
         info = TaskInfo(task_id=task_id, task_type=task_type,
-                       user_id=user_id, status=TaskStatus.QUEUED, params=params)
+                       user_id=user_id, status=TaskStatus.QUEUED, params=params,
+                       notify=notify)
         with self._lock:
             self._tasks[task_id] = info
 
@@ -67,6 +70,13 @@ class AsyncTaskManager:
         if self._on_complete_callback:
             self._on_complete_callback(task_id)
 
+        info = self._tasks.get(task_id)
+        if info and info.notify and self._on_notify_callback:
+            try:
+                self._on_notify_callback(task_id, info.notify)
+            except Exception:
+                pass
+
     def query(self, task_id: str) -> TaskInfo | None:
         return self._tasks.get(task_id)
 
@@ -86,6 +96,9 @@ class AsyncTaskManager:
 
     def set_on_complete(self, callback: Callable):
         self._on_complete_callback = callback
+
+    def set_on_notify(self, callback: Callable):
+        self._on_notify_callback = callback
 
 
 _task_manager: "AsyncTaskManager | None" = None

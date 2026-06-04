@@ -3,8 +3,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import logging
+
 import dotenv
 dotenv.load_dotenv()
+
+logger = logging.getLogger("wxagent.config")
 
 # ============================================================
 # 项目路径
@@ -107,7 +111,6 @@ ADV_WHISPER_DEVICE = os.getenv("ADV_WHISPER_DEVICE", _ADVANCED.get("whisper_devi
 ADV_WHISPER_COMPUTE_TYPE = os.getenv("ADV_WHISPER_COMPUTE_TYPE", _ADVANCED.get("whisper_compute_type", "int8"))
 ADV_WHISPER_CLOUD_MODEL = os.getenv("ADV_WHISPER_CLOUD_MODEL", _ADVANCED.get("whisper_cloud_model", "whisper-1"))
 ADV_OCR_LANG = os.getenv("ADV_OCR_LANG", _ADVANCED.get("ocr_lang", "ch"))
-ADV_SEARCH_MAX_RESULTS = int(os.getenv("ADV_SEARCH_MAX_RESULTS", _ADVANCED.get("search_max_results", 5)))
 ADV_WEB_FETCH_MAX_CHARS = int(os.getenv("ADV_WEB_FETCH_MAX_CHARS", _ADVANCED.get("web_fetch_max_chars", 8000)))
 ADV_IO_POOL_MAX_WORKERS = int(os.getenv("ADV_IO_POOL_MAX_WORKERS", _ADVANCED.get("io_pool_max_workers", 8)))
 ADV_CPU_POOL_MAX_WORKERS = int(os.getenv("ADV_CPU_POOL_MAX_WORKERS", _ADVANCED.get("cpu_pool_max_workers", 2)))
@@ -133,6 +136,49 @@ ADV_CODE_TOTAL_OUTPUT_LIMIT = int(os.getenv("ADV_CODE_TOTAL_OUTPUT_LIMIT", _ADVA
 ADV_MEMORY_SEARCH_TOP_K = int(os.getenv("ADV_MEMORY_SEARCH_TOP_K", _ADVANCED.get("memory_search_top_k", 3)))
 ADV_RELEVANCE_THRESHOLD = float(os.getenv("ADV_RELEVANCE_THRESHOLD", _ADVANCED.get("relevance_threshold", 0.5)))
 ADV_PREFERENCE_CONFIDENCE_THRESHOLD = float(os.getenv("ADV_PREFERENCE_CONFIDENCE_THRESHOLD", _ADVANCED.get("preference_confidence_threshold", 0.6)))
+
+MCP_ENABLED = os.getenv("MCP_ENABLED", str(_YAML_CFG.get("mcp", {}).get("enabled", "true"))).lower() == "true"
+
+# 工具按需加载（Tool Search）：启用后 LLM 仅看到 3 个桥接工具，
+# 通过 tool_search → tool_describe → tool_call 流程按需发现和调用工具，
+# 大幅减少每轮 API 的 token 消耗（"MCP 工具税"）。
+TOOL_SEARCH_ENABLED = os.getenv(
+    "TOOL_SEARCH_ENABLED",
+    str(_YAML_CFG.get("tool_search", {}).get("enabled", "true")),
+).lower() == "true"
+# 始终全量加载的工具（绕过桥接，直接暴露给 LLM），逗号分隔
+TOOL_SEARCH_ALWAYS_LOAD = [
+    t.strip()
+    for t in os.getenv(
+        "TOOL_SEARCH_ALWAYS_LOAD",
+        ",".join(_YAML_CFG.get("tool_search", {}).get("always_load", [])),
+    ).split(",")
+    if t.strip()
+]
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+MCP_SERVERS = _YAML_CFG.get("mcp", {}).get("servers", {})
+
+# 过滤掉 enabled: false 的 MCP server
+MCP_SERVERS = {k: v for k, v in MCP_SERVERS.items() if v.get("enabled", True) is not False}
+
+_skip_servers = []
+for _srv_name, _srv_cfg in MCP_SERVERS.items():
+    _env = _srv_cfg.get("env", {})
+    _env_from_dotenv = _srv_cfg.pop("env_from_dotenv", [])
+    for _key in _env_from_dotenv:
+        _val = os.getenv(_key, "")
+        if not _val:
+            # 必需的环境变量为空，跳过该 MCP 服务器
+            logger.info(f"MCP server '{_srv_name}' skipped: env '{_key}' not set")
+            _skip_servers.append(_srv_name)
+            break
+        _env[_key] = _val
+    if _srv_name not in _skip_servers and _env:
+        _srv_cfg["env"] = _env
+
+for _srv_name in _skip_servers:
+    MCP_SERVERS.pop(_srv_name, None)
 
 # Agent 后端：legacy（简单循环）或 langgraph（状态图，支持中断/确认/自愈）
 AGENT_BACKEND = os.getenv("AGENT_BACKEND", "langgraph")
@@ -182,7 +228,8 @@ def init_workspace_packages(profile: str = "basic"):
 
 _SYSTEM_PROMPT_BASE = _PROMPTS.get("system_prompt", "你是一个通过微信与用户聊天的 AI 助手，运行在用户的个人电脑上。你可以访问本地文件系统。")
 
-_TOOL_DESCRIPTIONS = f"""
+# 静态提示词部分（环境信息、规则、原则、使用原则、内容限制、文件存储规则）
+_STATIC_PROMPT = f"""
 
 ## 用户环境信息
 - 工作区目录: {WORKSPACE_DIR}（你的主战场，所有文件操作优先在此进行）
@@ -207,59 +254,76 @@ _TOOL_DESCRIPTIONS = f"""
 - 用户说"帮我处理这个文件"→ 你直接在工作区操作，完成后用 send_file 发给用户
 - 不要说"请先保存到桌面"之类的话，你完全可以自己下载和处理
 - 所有中间文件、临时文件都在工作区内处理，最终结果用 send_file 发给用户
+"""
 
-## 可用工具
-你可以使用以下工具来帮助用户：
+# 工具分类和详细描述（用于系统提示词）
+# key: 工具名, value: (分类, 描述)
+_TOOL_PROMPT_DETAILS = {
+    # 文件操作
+    "read_file": ("文件操作", "读取文件内容。当用户问'看看xxx文件'时使用"),
+    "write_file": ("文件操作", f"写入文件。内容保存到 {WORKSPACE_DIR} 目录"),
+    "list_directory": ("文件操作", "浏览目录。当用户说'桌面有什么文件'时使用"),
+    "search_files": ("文件操作", "搜索文件。当用户说'找一下xxx文件'时使用"),
+    "send_file": ("文件操作", "发送文件给用户。当用户说'发给我'/'把xxx发过来'时使用"),
+    "batch_rename": ("文件操作", "批量重命名文件。当用户说'把这些文件重命名'时使用"),
+    "organize_files": ("文件操作", "按规则整理文件。当用户说'整理一下桌面'/'按类型分类'时使用"),
+    # 代码执行
+    "run_python": ("代码执行", "执行 Python 代码。支持 pandas/numpy/matplotlib/python-docx/Pillow 等库。缺少包时先用 install_package 安装"),
+    "install_package": ("代码执行", "在工作区虚拟环境中安装 Python 包。仅安装到 workspace/.venv，不影响系统"),
+    # 系统控制
+    "run_shell": ("系统控制", "执行系统命令。需要先确认再执行，仅限只读操作"),
+    "system_action": ("系统控制", "执行系统操作（音量调节/锁屏/休眠）。当用户说'把音量调大'/'锁屏'时使用"),
+    "open_app": ("系统控制", "打开应用程序（Chrome/VSCode/记事本/计算器/资源管理器等）。当用户说'打开浏览器'时使用"),
+    "get_active_window": ("系统控制", "获取当前活跃窗口标题"),
+    "clipboard_read": ("系统控制", "读取剪贴板文本"),
+    "list_processes": ("系统控制", "列出运行中的进程。当用户说'看看有什么程序在运行'时使用"),
+    "kill_process": ("系统控制", "终止进程。当用户说'关掉xxx程序'时使用"),
+    "check_port": ("系统控制", "检查端口占用。当用户说'80端口被谁占了'时使用"),
+    # 网络
+    "web_fetch": ("网络", "抓取网页内容。提取正文文本"),
+    "webpage_snapshot": ("网络", "网页快照。将网页渲染保存为 PDF"),
+    "download_video": ("网络", "下载视频。当用户说'帮我下载这个视频'时使用"),
+    "http_download": ("网络", "下载文件。当用户说'下载这个文件'/'帮我下载'时使用。GitHub 仓库链接会自动通过镜像加速下载 ZIP。**禁止用 curl/wget 下载，必须用此工具**"),
+    "aria2_download": ("网络", "Aria2 高速下载（需本地 Aria2 服务）。大文件或需要断点续传时使用"),
+    "aria2_status": ("网络", "查询 Aria2 下载状态"),
+    # 媒体处理
+    "ocr_image": ("媒体处理", "OCR 识别图片中的文字。当用户说'识别图片文字'/'图片里写了什么'时使用"),
+    "transcribe_audio": ("媒体处理", "音频转录为文字。当用户说'把录音转成文字'时使用"),
+    "video_add_subtitles": ("媒体处理", "给视频添加字幕"),
+    # 磁盘管理
+    "scan_large_files": ("磁盘管理", "扫描大文件。当用户说'磁盘空间不够了'/'找大文件'时使用"),
+    "find_duplicates": ("磁盘管理", "查找重复文件。当用户说'帮我找重复文件'时使用"),
+    "disk_usage": ("磁盘管理", "磁盘空间统计。当用户说'看看磁盘用了多少'时使用"),
+    # 技能与监控
+    "schedule_task": ("技能与监控", "设置定时任务。当用户说'每天早上9点提醒我'时使用"),
+    "monitor_url": ("技能与监控", "监控 URL 变化。当用户说'帮我盯着这个网页'时使用"),
+    # 飞书
+    "feishu_create_document": ("飞书", "创建飞书文档。当用户说'帮我创建一个飞书文档'/'在飞书写个文档'时使用。创建成功后必须将文档链接返回给用户"),
+    "feishu_add_document_blocks": ("飞书", "向飞书文档添加内容。当用户说'往文档里写点内容'/'在文档中添加标题和正文'时使用"),
+    "feishu_get_document": ("飞书", "获取飞书文档内容。当用户说'看看这个飞书文档'/'读取飞书文档内容'时使用"),
+    "feishu_create_bitable": ("飞书", "创建飞书多维表格。当用户说'帮我创建一个多维表格'/'在飞书建个表'时使用。创建成功后必须将表格链接返回给用户"),
+    "feishu_create_bitable_table": ("飞书", "在多维表格中创建数据表。当用户说'在表格里加个数据表'时使用"),
+    "feishu_add_bitable_field": ("飞书", "向多维表格添加字段。当用户说'给表格加一列'/'添加字段'时使用"),
+    "feishu_add_bitable_records": ("飞书", "向多维表格添加记录。当用户说'往表格里添加数据'/'插入几条记录'时使用"),
+    "feishu_list_bitable": ("飞书", "查看多维表格记录。当用户说'看看表格里有什么数据'时使用"),
+    "feishu_list_bitable_tables": ("飞书", "列出多维表格的数据表。当用户说'看看有哪些数据表'时使用"),
+    "feishu_create_folder": ("飞书", "创建飞书云空间文件夹。当用户说'在飞书创建个文件夹'时使用。创建成功后必须将文件夹链接返回给用户"),
+    "feishu_list_folder": ("飞书", "列出飞书文件夹内容。当用户说'看看飞书云盘里有什么'时使用"),
+    "feishu_upload_file": ("飞书", "上传文件到飞书云盘。当用户说'把这个文件传到飞书'时使用"),
+    "feishu_send_message": ("飞书", "发送飞书消息。当用户说'给xxx发个飞书消息'时使用"),
+    "feishu_send_group_message": ("飞书", "发送飞书群消息。当用户说'在飞书群里发消息'时使用"),
+    "feishu_list_calendar": ("飞书", "查看飞书日历。当用户说'看看我今天的日程'/'飞书日历有什么安排'时使用"),
+    "feishu_add_permission": ("飞书", "给飞书文档/表格添加权限或设置公开分享。当用户说'把这个文档分享给别人'/'设置文档权限'时使用。创建文档后默认只有应用能访问，需要用此工具设置分享"),
+    "feishu_delete_file": ("飞书", "删除飞书云空间中的文件/文档/表格。当用户说'删除这个飞书文档'/'把那个表格删了'时使用。删除后进入回收站可恢复"),
+    "feishu_copy_file": ("飞书", "复制飞书文件到指定文件夹。当用户说'复制这个文档'/'把这个表格复制一份'时使用。复制成功后必须将新文件链接返回给用户"),
+    "feishu_move_file": ("飞书", "移动飞书文件到指定文件夹。当用户说'移动这个文档'/'把文件移到另一个文件夹'时使用"),
+}
 
-### 文件操作
-- **read_file**: 读取文件内容。当用户问"看看xxx文件"时使用
-- **write_file**: 写入文件。内容保存到 {WORKSPACE_DIR} 目录
-- **list_directory**: 浏览目录。当用户说"桌面有什么文件"时使用
-- **search_files**: 搜索文件。当用户说"找一下xxx文件"时使用
-- **send_file**: 发送文件给用户。当用户说"发给我"/"把xxx发过来"时使用
-- **batch_rename**: 批量重命名文件。当用户说"把这些文件重命名"时使用
-- **organize_files**: 按规则整理文件。当用户说"整理一下桌面"/"按类型分类"时使用
-
-### 代码执行
-- **run_python**: 执行 Python 代码。支持 pandas/numpy/matplotlib/python-docx/Pillow 等库。缺少包时先用 install_package 安装
-- **install_package**: 在工作区虚拟环境中安装 Python 包。仅安装到 workspace/.venv，不影响系统
-
-### 系统控制
-- **run_shell**: 执行系统命令。需要先确认再执行，仅限只读操作
-- **system_action**: 执行系统操作（音量调节/锁屏/休眠）。当用户说"把音量调大"/"锁屏"时使用
-- **open_app**: 打开应用程序（Chrome/VSCode/记事本/计算器/资源管理器等）。当用户说"打开浏览器"时使用
-- **get_active_window**: 获取当前活跃窗口标题
-- **clipboard_read**: 读取剪贴板文本
-- **list_processes**: 列出运行中的进程。当用户说"看看有什么程序在运行"时使用
-- **kill_process**: 终止进程。当用户说"关掉xxx程序"时使用
-- **check_port**: 检查端口占用。当用户说"80端口被谁占了"时使用
-
-### 网络
-- **web_search**: 网页搜索。使用 DuckDuckGo 搜索引擎
-- **web_fetch**: 抓取网页内容。提取正文文本
-- **webpage_snapshot**: 网页快照。将网页渲染保存为 PDF
-- **download_video**: 下载视频。当用户说"帮我下载这个视频"时使用
-- **http_download**: 下载文件。当用户说"下载这个文件"/"帮我下载"时使用。GitHub 仓库链接会自动通过镜像加速下载 ZIP。**禁止用 curl/wget 下载，必须用此工具**
-- **aria2_download**: Aria2 高速下载（需本地 Aria2 服务）。大文件或需要断点续传时使用
-- **aria2_status**: 查询 Aria2 下载状态
-
-### 媒体处理
-- **ocr_image**: OCR 识别图片中的文字。当用户说"识别图片文字"/"图片里写了什么"时使用
-- **transcribe_audio**: 音频转录为文字。当用户说"把录音转成文字"时使用
-- **video_add_subtitles**: 给视频添加字幕
-
-### 磁盘管理
-- **scan_large_files**: 扫描大文件。当用户说"磁盘空间不够了"/"找大文件"时使用
-- **find_duplicates**: 查找重复文件。当用户说"帮我找重复文件"时使用
-- **disk_usage**: 磁盘空间统计。当用户说"看看磁盘用了多少"时使用
-
-### 技能与监控
-- **skill_xxx**: 执行预定义技能（如学习模式、工作模式等）。当用户说"进入xxx模式"/"开始学习"时使用
-- **schedule_task**: 设置定时任务。当用户说"每天早上9点提醒我"时使用
-- **monitor_url**: 监控 URL 变化。当用户说"帮我盯着这个网页"时使用
+# 工具使用原则和内容限制（静态）
+_TOOL_RULES = f"""
 
 ## 工具使用原则
-- 用户要求文件操作时，主动使用工具，不要只说"我做不到"
+- 用户要求文件操作时，主动使用工具，不要只说'我做不到'
 - 先 list_directory 或 search_files 确认文件存在，再 read_file 或 send_file
 - 发送文件时用绝对路径，不要用相对路径
 - 遇到错误如实告诉用户
@@ -269,7 +333,7 @@ _TOOL_DESCRIPTIONS = f"""
 - **检测文件类型用 run_python 的 mimetypes 模块，禁止用 run_shell + file 命令**
 
 ## 内容限制
-- 不要生成 URL 或链接
+- 不要自行编造 URL 或链接，但工具返回的链接（如飞书文档链接）必须如实转达给用户
 - 不要使用 Markdown 表格（微信不支持）
 - 代码块用 ``` 包裹
 - 单条消息控制在 1500 字以内
@@ -280,10 +344,106 @@ _TOOL_DESCRIPTIONS = f"""
 - 生成文档、图表 → {WORKSPACE_DIR / "output"}
 - 下载文件 → {WORKSPACE_DIR / "downloads"}
 - 临时文件 → {WORKSPACE_DIR / "temp"}，用后及时清理
-- 当用户提到"桌面"时，使用 {USER_DESKTOP} 路径
-- 当用户提到相对路径时（如"Documents"），基于 {USER_HOME} 解析
-- 当用户提到"工作区"或"workspace"时，使用 {WORKSPACE_DIR} 路径
+- 当用户提到'桌面'时，使用 {USER_DESKTOP} 路径
+- 当用户提到相对路径时（如'Documents'），基于 {USER_HOME} 解析
+- 当用户提到'工作区'或'workspace'时，使用 {WORKSPACE_DIR} 路径
 - 禁止向 C:\\Windows、C:\\Program Files 等系统目录写入文件
 """
 
-SYSTEM_PROMPT = _SYSTEM_PROMPT_BASE + _TOOL_DESCRIPTIONS
+
+def _build_tool_section() -> str:
+    """从 ToolRegistry 动态生成工具描述部分。
+
+    Tool Search 模式下，只生成桥接工具 + always_load 工具的描述，
+    引导 LLM 通过 tool_search → tool_describe → tool_call 流程按需发现工具。
+    传统模式下，列出所有工具。
+    """
+    from tools.registry import ToolRegistry
+    from tools.base import ToolType
+
+    # Tool Search 模式：简洁的桥接工具引导
+    if TOOL_SEARCH_ENABLED:
+        lines = [
+            "## 可用工具",
+            "你可以通过以下流程按需发现和使用工具：",
+            "",
+            "1. **tool_search(query)** — 搜索与你的意图匹配的工具",
+            "2. **tool_describe(tool_name)** — 查看指定工具的完整参数格式",
+            "3. **tool_call(tool_name, arguments)** — 执行指定工具",
+            "",
+            "当你需要执行操作时，先用 tool_search 搜索相关工具，",
+            "再用 tool_describe 查看参数格式，最后用 tool_call 执行。",
+            "不要猜测工具名或参数格式，务必先搜索和查看。",
+            "",
+            "## 飞书操作注意",
+            "- 使用飞书创建文档、表格、文件夹等操作后，必须将工具返回的链接转达给用户",
+            "- 飞书创建的资源默认只有应用能访问，工具会自动设置公开分享，如未成功需提醒用户手动设置权限",
+        ]
+        # always_load 工具直接列出
+        always_names = set(TOOL_SEARCH_ALWAYS_LOAD)
+        if always_names:
+            all_defs = ToolRegistry.get_all_defs()
+            always_tools = [td for td in all_defs if td.name in always_names]
+            if always_tools:
+                lines.append("")
+                lines.append("### 始终可用的工具")
+                lines.append("以下工具可直接调用，无需通过 tool_search 搜索：")
+                for td in always_tools:
+                    lines.append(f"- **{td.name}**: {td.description}")
+        return "\n".join(lines)
+
+    # 传统模式：全量列出所有工具
+    # 收集所有已注册工具
+    all_defs = ToolRegistry.get_all_defs()
+    registered_names = {td.name for td in all_defs}
+
+    # 按分类组织已知工具
+    categories: dict[str, list[tuple[str, str]]] = {}
+    seen = set()
+    for name, (cat, desc) in _TOOL_PROMPT_DETAILS.items():
+        if name in registered_names:
+            categories.setdefault(cat, []).append((name, desc))
+            seen.add(name)
+
+    # 未在 _TOOL_PROMPT_DETAILS 中的工具（如 MCP 工具、skill 工具）
+    extra_tools: list[tuple[str, str]] = []
+    for td in all_defs:
+        if td.name not in seen and td.name.startswith("skill_"):
+            extra_tools.append((td.name, "执行预定义技能。当用户说'进入xxx模式'时使用"))
+            seen.add(td.name)
+        elif td.name not in seen:
+            # MCP 工具等：使用 ToolDef.description
+            meta = ToolRegistry.get_meta(td.name)
+            prefix = ""
+            if meta and meta.type == ToolType.MCP:
+                # 去掉 [MCP:xxx] 前缀
+                desc = td.description
+                if desc.startswith("[MCP:"):
+                    desc = desc.split("]", 1)[-1].strip()
+                prefix = "（MCP 工具）"
+            else:
+                desc = td.description
+            extra_tools.append((td.name, f"{desc}{prefix}"))
+            seen.add(td.name)
+
+    # 构建文本
+    lines = ["## 可用工具", "你可以使用以下工具来帮助用户：", ""]
+    for cat, tools in categories.items():
+        lines.append(f"### {cat}")
+        for name, desc in tools:
+            lines.append(f"- **{name}**: {desc}")
+        lines.append("")
+
+    if extra_tools:
+        lines.append("### 扩展工具")
+        for name, desc in extra_tools:
+            lines.append(f"- **{name}**: {desc}")
+
+    return "\n".join(lines)
+
+
+def get_system_prompt() -> str:
+    """获取完整的系统提示词（动态生成工具描述部分）。"""
+    tool_section = _build_tool_section()
+    return _SYSTEM_PROMPT_BASE + _STATIC_PROMPT + "\n" + tool_section + _TOOL_RULES
+

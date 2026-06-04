@@ -39,7 +39,7 @@ def _rewrite_url(url: str) -> tuple[str, str]:
                     return f"{mirror}/{url}", f"GitHub Release → 镜像加速下载"
             if rest and not rest.startswith("/archive/"):
                 return url, f"GitHub 子路径，需用 web_fetch 查看页面内容"
-            if not rest or rest.startswith("/archive/"):
+            else:
                 if not rest:
                     zip_url = f"https://github.com/{owner}/{repo}/archive/refs/heads/main.zip"
                 else:
