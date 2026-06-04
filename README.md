@@ -514,4 +514,4 @@ ToolRegistry.register(
 
 本项目采用 [GNU General Public License v3.0](LICENSE) 开源协议。
 
-Copyright (C) 2026 WxAgent Contributors
+Copyright (C) 2026 Elaine-one
