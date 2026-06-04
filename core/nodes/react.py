@@ -1,23 +1,17 @@
 import json
 import logging
+import re
 
 import config as cfg
-from channel.client import download_image_as_base64, download_cdn_file, download_media_list
+from channel.client import download_image_as_base64, download_media_list
 from channel.message import extract_recent_image_context, find_recent_image_files, save_recent_images
-from core.deps import Deps
+from core.deps import Deps, get_deps
 from core.state import AgentState
+from llm.streaming import split_for_wechat
 from observability.metrics import record_llm_call
 from tools.registry import ToolRegistry
 
 logger = logging.getLogger("wxagent.react")
-
-
-def _get_deps(config: dict | None) -> Deps:
-    if config:
-        deps = config.get("configurable", {}).get("deps")
-        if deps is not None:
-            return deps
-    raise RuntimeError("Deps not found in config")
 
 
 def _msg_to_dict(msg) -> dict:
@@ -98,8 +92,8 @@ def _fix_orphaned_tool_calls(conv: list) -> list:
     return conv
 
 
-def react_node(state: AgentState, config) -> AgentState:
-    deps = _get_deps(config)
+async def react_node(state: AgentState, config) -> AgentState:
+    deps = get_deps(config)
     model = deps.model
     real_session = deps.real_session(config)
     memory = deps.memory
@@ -110,7 +104,7 @@ def react_node(state: AgentState, config) -> AgentState:
     conv = _fix_orphaned_tool_calls(conv)
 
     if not conv or conv[0].get("role") != "system":
-        conv = [{"role": "system", "content": cfg.SYSTEM_PROMPT}]
+        conv = [{"role": "system", "content": cfg.get_system_prompt()}]
 
     is_resuming = state.get("pending_confirmation") == {} and _has_pending_tool_calls(conv)
 
@@ -165,34 +159,36 @@ def react_node(state: AgentState, config) -> AgentState:
         elif has_voice:
             voice_urls = state.get("voice_urls", [])
             voice_media_refs = state.get("voice_media_refs", [])
-            sub_dir = str(cfg.WORKSPACE_DIR / "downloads" / "voice")
-            saved_voice_paths = download_media_list(voice_urls, voice_media_refs, real_session, sub_dir, "voice", ".silk")
-            for p in saved_voice_paths:
-                print(f"  🎤 语音已下载: {p}")
 
+            # 从 user_input 中提取转写文本（逐行过滤 voice_url 标记行）
             voice_text = ""
             if user_input:
-                voice_url_marker = "\n[voice_url:"
-                cleaned = user_input.split(voice_url_marker)[0].strip() if voice_url_marker in user_input else user_input
-                voice_text = cleaned
+                lines = user_input.split("\n")
+                text_lines = [l for l in lines if not l.startswith("[voice_url:")]
+                voice_text = "\n".join(text_lines).strip()
 
+            # 只有当微信未提供转写文本时，才进行本地转写（降级方案）
             if not voice_text or voice_text == "[语音消息]":
+                sub_dir = str(cfg.WORKSPACE_DIR / "downloads" / "voice")
+                saved_voice_paths = download_media_list(voice_urls, voice_media_refs, real_session, sub_dir, "voice", ".silk")
+                for p in saved_voice_paths:
+                    print(f"  🎤 语音已下载: {p}")
                 if saved_voice_paths:
                     try:
-                        transcription_result = ToolRegistry.execute("transcribe_audio", {"file_path": saved_voice_paths[0]}, real_session, state.get("user_id", ""))
+                        transcription_result = await ToolRegistry.aexecute("transcribe_audio", {"file_path": saved_voice_paths[0]}, real_session, state.get("user_id", ""))
                         if transcription_result.success and transcription_result.content:
                             voice_text = f"[语音消息] {transcription_result.content}"
                             state["voice_transcription"] = transcription_result.content
                             print(f"  🎤 语音转文字(Whisper): {transcription_result.content[:80]}")
                     except Exception:
                         pass
-
-            if voice_text and voice_text != "[语音消息]":
+            else:
+                # 微信已提供转写文本，无需本地转写
                 print(f"  🎤 语音转文字: {voice_text[:80]}")
 
             enriched = voice_text if voice_text and voice_text != "[语音消息]" else "[语音消息：转写失败]"
             conv.append({"role": "user", "content": enriched})
-            logger.info("react_voice_ok", extra=_log(has_text=bool(voice_text), files=len(saved_voice_paths)))
+            logger.info("react_voice_ok", extra=_log(has_text=bool(voice_text), urls=len(voice_urls)))
 
         elif has_video:
             video_urls = state.get("video_urls", [])
@@ -280,40 +276,90 @@ def react_node(state: AgentState, config) -> AgentState:
 
     for _round in range(cfg.MAX_TOOL_ROUNDS):
         logger.info("react_llm_call", extra=_log(round=_round, conv_len=len(conv)))
-        resp = model.chat(conv)
 
-        input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
-        output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
-        model_name = getattr(model, 'primary', model).__class__.__name__ if hasattr(model, 'primary') else ""
-        record_llm_call(model_name, input_tokens, output_tokens, state)
+        # 使用流式调用，边收边判断是否有工具调用
+        full_text = ""
+        all_tool_calls = []
+        extra_fields = {}
+        stream_callback = deps.stream_callback
+        # 流式发送缓冲区：累积文本，遇到自然断句就发送
+        _sent_chars = 0  # 已发送的字符数
+        _buffer = ""
 
-        if resp.tool_calls:
-            tool_names = [tc.name for tc in resp.tool_calls]
+        for chunk in model.stream_chat(conv):
+            if chunk.delta:
+                full_text += chunk.delta
+                # 如果没有工具调用且设置了流式回调，尝试边收边发
+                if stream_callback and not all_tool_calls:
+                    _buffer += chunk.delta
+                    # 检查是否达到自然断句点
+                    _should_send = False
+                    if len(_buffer) >= cfg.ADV_MAX_CHARS:
+                        _should_send = True
+                    elif len(_buffer) > 60:  # 至少累积 60 字符再检查断句
+                        # 检查是否以标点结尾
+                        if _buffer.rstrip()[-1:] in "。！？\n；：":
+                            _should_send = True
+                    if _should_send:
+                        try:
+                            stream_callback(_buffer)
+                            _sent_chars += len(_buffer)
+                            _buffer = ""
+                        except Exception:
+                            pass
+            if chunk.tool_calls:
+                all_tool_calls = chunk.tool_calls
+            if chunk.extra_fields:
+                extra_fields.update(chunk.extra_fields)
+            if chunk.is_final:
+                break
+
+        # 发送缓冲区中剩余的文本
+        if stream_callback and not all_tool_calls and _buffer:
+            try:
+                stream_callback(_buffer)
+            except Exception:
+                pass
+
+        input_tokens = extra_fields.get("usage", {}).get("prompt_tokens", 0)
+        output_tokens = extra_fields.get("usage", {}).get("completion_tokens", 0)
+        record_llm_call(model.model_name, input_tokens, output_tokens, state)
+
+        if all_tool_calls:
+            tool_names = [tc.name for tc in all_tool_calls]
             print(f"  🔧 调用 {len(tool_names)} 个工具: {tool_names}")
             logger.info("react_tool_calls", extra=_log(round=_round, tools=tool_names))
-            for tc in resp.tool_calls:
+            for tc in all_tool_calls:
                 tc_meta = ToolRegistry.get_meta(tc.name)
                 tc_type = tc_meta.type if tc_meta else ""
                 logger.info("react_tool_detail", extra=_log(round=_round, tool=tc.name, tool_args=str(tc.args)[:200], tool_type=tc_type))
         else:
-            print(f"  → 已回复 ({len(resp.text)} chars)")
-            logger.info("react_final_response", extra=_log(round=_round, text_len=len(resp.text), text_preview=resp.text[:200]))
+            print(f"  → 已回复 ({len(full_text)} chars)")
+            logger.info("react_final_response", extra=_log(round=_round, text_len=len(full_text), text_preview=full_text[:200]))
 
-        if not resp.tool_calls:
-            msg_dict = {"role": "assistant", "content": resp.text}
-            msg_dict.update(resp.extra_fields)
+        if not all_tool_calls:
+            msg_dict = {"role": "assistant", "content": full_text}
+            msg_dict.update(extra_fields)
             conv.append(msg_dict)
-            state["final_response"] = resp.text
+            state["final_response"] = full_text
             state["task_complete"] = True
             state["messages"] = _trim(conv, cfg.MAX_HISTORY)
             break
 
-        tool_call_msg = model.wrap_tool_call(resp.tool_calls, resp.extra_fields)
+        tool_call_msg = model.wrap_tool_call(all_tool_calls, extra_fields)
         tool_call_msg.setdefault("content", "")
         conv.append(tool_call_msg)
 
-        for tc in resp.tool_calls:
-            result = ToolRegistry.execute(tc.name, tc.args, real_session, state.get("user_id", ""))
+        for tc in all_tool_calls:
+            result = await ToolRegistry.aexecute(tc.name, tc.args, real_session, state.get("user_id", ""))
+
+            # tool_call 桥接工具透传确认信息，补充真实工具名
+            if result.requires_confirmation and tc.name == "tool_call":
+                if not result.confirmation_detail:
+                    result.confirmation_detail = {}
+                result.confirmation_detail.setdefault("bridge_tool", "tool_call")
+                result.confirmation_detail.setdefault("tool_name", tc.args.get("tool_name", ""))
+                result.confirmation_detail.setdefault("tool_args", tc.args.get("arguments", {}))
 
             if result.requires_confirmation:
                 confirm_rounds = state.get("confirm_rounds", 0) + 1

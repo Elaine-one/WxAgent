@@ -294,6 +294,7 @@ export default function Dashboard() {
   const [showAll, setShowAll] = useState(false)
   const [uptimeOffset, setUptimeOffset] = useState<number>(0)
   const logTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const uptimeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const fetchLogs = useCallback(async () => {
@@ -319,15 +320,26 @@ export default function Dashboard() {
     if (status?.running) {
       fetchLogs()
       logTimerRef.current = setInterval(fetchLogs, 3000)
+      getStats().then(setStats).catch(() => {})
+      statsTimerRef.current = setInterval(() => {
+        getStats().then(setStats).catch(() => {})
+      }, 5000)
     } else {
       if (logTimerRef.current) {
         clearInterval(logTimerRef.current)
         logTimerRef.current = null
       }
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current)
+        statsTimerRef.current = null
+      }
     }
     return () => {
       if (logTimerRef.current) {
         clearInterval(logTimerRef.current)
+      }
+      if (statsTimerRef.current) {
+        clearInterval(statsTimerRef.current)
       }
     }
   }, [status?.running, fetchLogs])

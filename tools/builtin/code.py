@@ -1,4 +1,5 @@
 import ast
+import logging
 import subprocess
 import time
 from pathlib import Path
@@ -7,6 +8,8 @@ import config
 from config import WORKSPACE_DIR, VENV_PYTHON, PYTHON_TIMEOUT, PYTHON_MAX_OUTPUT
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
 
 
 TOOL_META = ToolMeta(
@@ -121,8 +124,8 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
     finally:
         try:
             script_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("cleanup script failed: %s", e)
 
 
 BLOCKED_PACKAGES = {

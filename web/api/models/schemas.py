@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -303,15 +303,3 @@ class ToolStatsResponse(BaseModel):
     enabled: int = 0
     disabled: int = 0
     by_type: dict[str, int] = {}
-
-
-class ToolRegistryConfig(BaseModel):
-    enabled: bool = True
-    priority: int = 100
-    config: dict[str, Any] = {}
-
-
-class ToolsRegistryConfig(BaseModel):
-    discovery_paths: list[str] = ["tools/builtin", "tools/skills", "tools/modes"]
-    registry: dict[str, ToolRegistryConfig] = {}
-    plugins: dict[str, str] = {}

@@ -13,6 +13,8 @@ import Prompts from './pages/Prompts'
 import Scenarios from './pages/Scenarios'
 import SystemControl from './pages/SystemControl'
 import ToolRegistry from './pages/ToolRegistry'
+import McpManage from './pages/McpManage'
+import FeishuManage from './pages/FeishuManage'
 
 function App() {
   return (
@@ -40,6 +42,8 @@ function App() {
             <Route path="prompts" element={<Prompts />} />
             <Route path="scenarios" element={<Scenarios />} />
             <Route path="system" element={<SystemControl />} />
+            <Route path="mcp" element={<McpManage />} />
+            <Route path="feishu" element={<FeishuManage />} />
           </Route>
         </Routes>
       </BrowserRouter>

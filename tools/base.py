@@ -27,6 +27,7 @@ class ToolMeta:
     triggers: list[str] = field(default_factory=list)
     actions: list[dict] = field(default_factory=list)
     config: dict[str, Any] = field(default_factory=dict)
+    always_load: bool = False  # Tool Search 模式下始终全量暴露给 LLM
 
 
 @dataclass

@@ -25,7 +25,6 @@ const toolOptions = [
   { value: 'open_app', label: 'open_app - 打开应用' },
   { value: 'system_action', label: 'system_action - 系统操作' },
   { value: 'run_shell', label: 'run_shell - 执行命令' },
-  { value: 'web_search', label: 'web_search - 网页搜索' },
   { value: 'send_file', label: 'send_file - 发送文件' },
 ]
 
@@ -33,7 +32,6 @@ const toolArgExamples: Record<string, string> = {
   open_app: '{"app_name": "code"}',
   system_action: '{"action": "volume_down"}',
   run_shell: '{"command": "dir"}',
-  web_search: '{"query": "搜索内容"}',
   send_file: '{"file_path": "workspace/output/result.txt"}',
 }
 
@@ -308,7 +306,7 @@ export default function Scenarios() {
             autoFocus
           />
           <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
-            可用工具：open_app（打开应用）、system_action（系统操作）、run_shell（执行命令）、web_search（网页搜索）、send_file（发送文件）
+            可用工具：open_app（打开应用）、system_action（系统操作）、run_shell（执行命令）、send_file（发送文件）
           </div>
         </Modal>
 

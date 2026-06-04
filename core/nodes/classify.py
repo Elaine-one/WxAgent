@@ -3,7 +3,7 @@ import logging
 
 from channel.client import download_image_as_base64
 from channel.message import save_recent_images
-from core.deps import Deps
+from core.deps import Deps, get_deps
 from core.state import AgentState
 from observability.metrics import record_llm_call
 
@@ -11,7 +11,7 @@ logger = logging.getLogger("wxagent.classify")
 
 CLASSIFY_PROMPT = """判断用户消息的类型，回复 JSON:
 {{"type": "meta"|"confirm"|"new_task"|"interrupt"}}
-- meta: 元命令（/reset、/help、/status、/tasks、/usage）
+- meta: 元命令（/reset、/help、/status、/tasks、/usage、/cal、/doc、/msg、/agents）
 - confirm: 对确认请求的回复（Y/N/是/否/确认/取消等）
 - interrupt: 当前有任务在执行，用户想打断/纠正/放弃
 - new_task: 其他一切新请求
@@ -19,14 +19,6 @@ CLASSIFY_PROMPT = """判断用户消息的类型，回复 JSON:
 用户消息: {user_input}"""
 
 VISION_PROMPT = "请详细描述这张图片的内容，包括文字、物体、场景等所有可见信息。"
-
-
-def _get_deps(config: dict | None) -> Deps:
-    if config:
-        deps = config.get("configurable", {}).get("deps")
-        if deps is not None:
-            return deps
-    raise RuntimeError("Deps not found in config")
 
 
 def _build_multimodal_content(state, session=None):
@@ -61,7 +53,7 @@ def _build_multimodal_content(state, session=None):
 
 
 def classify_node(state: AgentState, config) -> AgentState:
-    deps = _get_deps(config)
+    deps = get_deps(config)
     model = deps.model
     real_session = deps.real_session(config)
     memory = deps.memory
@@ -137,8 +129,7 @@ def classify_node(state: AgentState, config) -> AgentState:
 
     input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
     output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
-    model_name = getattr(model, 'primary', model).__class__.__name__ if hasattr(model, 'primary') else ""
-    record_llm_call(model_name, input_tokens, output_tokens, state)
+    record_llm_call(model.model_name, input_tokens, output_tokens, state)
 
     try:
         result = json.loads(resp.text)

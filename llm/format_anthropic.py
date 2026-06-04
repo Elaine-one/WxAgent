@@ -52,9 +52,18 @@ class AnthropicFormat(MessageFormat):
         )
 
     def parse_response(self, raw: Any) -> LLMResponse:
+        extra = {}
+        # 提取 token 用量
+        usage = getattr(raw, "usage", None)
+        if usage:
+            extra["usage"] = {
+                "prompt_tokens": getattr(usage, "input_tokens", 0) or 0,
+                "completion_tokens": getattr(usage, "output_tokens", 0) or 0,
+            }
         return LLMResponse(
             text=_extract_anthropic_text(raw),
             tool_calls=_parse_anthropic_tool_calls(raw),
+            extra_fields=extra,
         )
 
     def wrap_tool_call(self, calls: list[ToolCall], extra_fields: Optional[dict] = None) -> dict:

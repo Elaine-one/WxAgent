@@ -127,6 +127,9 @@ def merge_messages(msgs: list) -> "InboundMessage":
         voice_media_ref=all_voice_media_refs[0] if all_voice_media_refs else {},
         video_url=all_video_urls[0] if all_video_urls else "",
         video_media_ref=all_video_media_refs[0] if all_video_media_refs else {},
+        # 保留完整列表供多语音场景使用
+        _all_voice_urls=all_voice_urls,
+        _all_voice_media_refs=all_voice_media_refs,
     )
 
 

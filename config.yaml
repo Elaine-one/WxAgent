@@ -98,12 +98,12 @@ security:
     - .env
     - AppData/Roaming/Microsoft
     - NTUSER.DAT
-ai_reviewer:
-  enabled: true
-  review_levels:
-  - caution
-  model: deepseek-chat
-  max_command_length: 500
+  ai_reviewer:
+    enabled: true
+    review_levels:
+    - caution
+    model: deepseek-chat
+    max_command_length: 500
 workspace:
   dir: workspace
   subdirs:
@@ -347,3 +347,25 @@ prompts:
 
 
     上下文: {context}'
+mcp:
+  enabled: true
+  servers:
+    baidu-maps:
+      transport: stdio
+      command: python
+      args:
+      - -m
+      - mcp_server_baidu_maps
+      env_from_dotenv:
+      - BAIDU_MAPS_API_KEY
+    amap-maps:
+      transport: stdio
+      command: python
+      args:
+      - -m
+      - amap_mcp_server
+      env_from_dotenv:
+      - AMAP_MAPS_API_KEY
+tool_search:
+  enabled: true
+  always_load: []

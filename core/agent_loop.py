@@ -10,6 +10,7 @@ from channel.message import (
     find_recent_image_files,
     save_recent_images,
 )
+from observability.metrics import record_llm_call
 
 logger = logging.getLogger("wxagent.agent_loop")
 
@@ -54,7 +55,7 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
     conv = conversations.get(user_id, [])
     is_new_conv = not conv
     if not conv:
-        system_prompt = config.SYSTEM_PROMPT
+        system_prompt = config.get_system_prompt()
         if phase3_ctx and phase3_ctx.get("memory"):
             try:
                 context = phase3_ctx["memory"].build_context_prompt(user_id, user_text)
@@ -81,16 +82,19 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
         logger.info("agent_loop_file", extra={"user_id": user_id, "files": len(saved_file_paths)})
 
     elif voice_urls or voice_media_refs:
-        sub_dir = str(config.WORKSPACE_DIR / "downloads" / "voice")
-        saved_voice_paths = download_media_list(voice_urls, voice_media_refs, state, sub_dir, "voice", ".silk")
-        for p in saved_voice_paths:
-            print(f"  🎤 语音已下载: {p}")
         voice_text = ""
         if user_text:
-            voice_url_marker = "\n[voice_url:"
-            cleaned = user_text.split(voice_url_marker)[0].strip() if voice_url_marker in user_text else user_text
-            voice_text = cleaned
+            # 逐行过滤 voice_url 标记行，保留所有转写文本
+            lines = user_text.split("\n")
+            text_lines = [l for l in lines if not l.startswith("[voice_url:")]
+            voice_text = "\n".join(text_lines).strip()
+
+        # 只有当微信未提供转写文本时，才进行本地转写（降级方案）
         if not voice_text or voice_text == "[语音消息]":
+            sub_dir = str(config.WORKSPACE_DIR / "downloads" / "voice")
+            saved_voice_paths = download_media_list(voice_urls, voice_media_refs, state, sub_dir, "voice", ".silk")
+            for p in saved_voice_paths:
+                print(f"  🎤 语音已下载: {p}")
             if saved_voice_paths:
                 try:
                     tr = tools.execute("transcribe_audio", {"file_path": saved_voice_paths[0]}, state, user_id)
@@ -99,11 +103,13 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
                         print(f"  🎤 语音转文字(Whisper): {tr[:80]}")
                 except Exception:
                     pass
-        if voice_text and voice_text != "[语音消息]":
+        else:
+            # 微信已提供转写文本，无需本地转写
             print(f"  🎤 语音转文字: {voice_text[:80]}")
+
         enriched = voice_text if voice_text and voice_text != "[语音消息]" else "[语音消息：转写失败]"
         conv.append({"role": "user", "content": enriched})
-        logger.info("agent_loop_voice", extra={"user_id": user_id, "has_text": bool(voice_text), "files": len(saved_voice_paths)})
+        logger.info("agent_loop_voice", extra={"user_id": user_id, "has_text": bool(voice_text), "urls": len(voice_urls)})
 
     elif video_urls or video_media_refs:
         sub_dir = str(config.WORKSPACE_DIR / "downloads" / "videos")
@@ -188,6 +194,10 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
         logger.info("agent_loop_llm_call", extra={"user_id": user_id, "round": _round, "conv_len": len(conv)})
         resp = model.chat(conv)
 
+        input_tokens = resp.extra_fields.get("usage", {}).get("prompt_tokens", 0)
+        output_tokens = resp.extra_fields.get("usage", {}).get("completion_tokens", 0)
+        record_llm_call(model.model_name, input_tokens, output_tokens, state)
+
         if not resp.tool_calls:
             msg_dict = {"role": "assistant", "content": resp.text}
             msg_dict.update(resp.extra_fields)
@@ -214,6 +224,11 @@ def agent_loop(model: llm.BaseLLM, user_id: str, msg,
     logger.info("agent_loop_max_rounds", extra={"user_id": user_id, "rounds": config.MAX_TOOL_ROUNDS})
     conv.append({"role": "user", "content": "请基于以上工具调用结果给出最终回复。"})
     final = model.chat(conv)
+
+    input_tokens = final.extra_fields.get("usage", {}).get("prompt_tokens", 0)
+    output_tokens = final.extra_fields.get("usage", {}).get("completion_tokens", 0)
+    record_llm_call(model.model_name, input_tokens, output_tokens, state)
+
     final_msg = {"role": "assistant", "content": final.text}
     final_msg.update(final.extra_fields)
     conv.append(final_msg)

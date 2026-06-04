@@ -29,9 +29,8 @@ def _get_log_file() -> Path:
 @router.get("/stats")
 def get_stats():
     try:
-        from observability.metrics import get_cost_tracker
-        tracker = get_cost_tracker()
-        return tracker.to_dict()
+        from observability.metrics import get_stats as _get_stats
+        return _get_stats()
     except Exception:
         return {
             "llm_calls": 0,

@@ -2,7 +2,6 @@ import httpx
 from bs4 import BeautifulSoup
 
 import config
-from security.data_border import get_consent_db
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
 
@@ -10,49 +9,10 @@ from tools.registry import ToolRegistry
 TOOL_META = ToolMeta(
     name="web",
     type=ToolType.BUILTIN,
-    description="Web工具集：搜索、网页抓取",
+    description="Web工具集：网页抓取",
     version="1.0.0",
-    tags=["web", "search", "http"],
+    tags=["web", "http"],
 )
-
-
-def _check_cloud_consent(service_name: str, user_id: str = "") -> ToolResult | None:
-    consent_db = get_consent_db()
-    if consent_db.has_consented(user_id, service_name):
-        return None
-    if consent_db.needs_prompt(user_id, service_name):
-        return ToolResult(
-            success=False,
-            error=f"此操作会将查询内容发送到 {service_name}，是否继续？",
-            requires_confirmation=True,
-            confirmation_detail={
-                "type": "cloud_consent",
-                "message": f"此操作会将数据发送到云端服务 {service_name}，是否继续？后续同类操作不再提示。",
-            },
-        )
-    return None
-
-
-def _web_search(query: str, max_results: int = None, state=None, user_id: str = "") -> ToolResult:
-    _max_results = max_results if max_results is not None else config.ADV_SEARCH_MAX_RESULTS
-    consent = _check_cloud_consent("DuckDuckGo 搜索引擎", user_id)
-    if consent is not None:
-        return consent
-    get_consent_db().record_consent(user_id, "DuckDuckGo 搜索引擎", True)
-    try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=_max_results))
-        formatted = "\n".join(
-            f"{i+1}. {r['title']}\n   {r['href']}\n   {r['body']}"
-            for i, r in enumerate(results)
-        )
-        return ToolResult(
-            success=True, content=formatted,
-            display=f"搜索 '{query}' 完成，共 {len(results)} 条结果",
-        )
-    except Exception as e:
-        return ToolResult(success=False, error=f"搜索失败: {e}")
 
 
 def _web_fetch(url: str, state=None, user_id: str = "") -> ToolResult:
@@ -76,22 +36,13 @@ def _web_fetch(url: str, state=None, user_id: str = "") -> ToolResult:
             success=True, content=text[:config.ADV_WEB_FETCH_MAX_CHARS],
             display=f"已获取 {url[:60]} ({len(text)} 字符)",
         )
-    except Exception as e:
-        return ToolResult(success=False, error=f"抓取失败: {e}")
+    except httpx.TimeoutException as e:
+        return ToolResult(success=False, error=f"抓取超时: {e}")
+    except httpx.HTTPStatusError as e:
+        return ToolResult(success=False, error=f"抓取失败 HTTP {e.response.status_code}: {e}")
+    except httpx.RequestError as e:
+        return ToolResult(success=False, error=f"抓取网络错误: {e}")
 
-
-ToolRegistry.register(
-    ToolDef(
-        name="web_search",
-        description="使用 DuckDuckGo 搜索引擎搜索网页。首次使用需确认数据出境。",
-        parameters={
-            "query": {"type": "string", "description": "搜索关键词"},
-            "max_results": {"type": "integer", "description": "最大结果数，默认5"},
-        },
-        required=["query"],
-    ),
-    _web_search,
-)
 
 ToolRegistry.register(
     ToolDef(

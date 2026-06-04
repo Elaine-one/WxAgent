@@ -18,7 +18,7 @@ workspace/
 docs/
 .trae
 CLAUDE.md
-
+DOCX
 # Python 字节码
 __pycache__/
 *.py[cod]

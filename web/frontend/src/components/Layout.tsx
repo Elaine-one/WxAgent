@@ -13,6 +13,7 @@ import {
   AppstoreOutlined,
   ControlOutlined,
   ApiOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons'
 import { useServiceStore } from '../store/serviceStore'
 
@@ -29,6 +30,8 @@ const menuItems = [
   { key: '/tool-registry', icon: <ApiOutlined />, label: '工具注册表' },
   { key: '/prompts', icon: <FormOutlined />, label: '提示词' },
   { key: '/scenarios', icon: <AppstoreOutlined />, label: 'Skill 管理' },
+  { key: '/mcp', icon: <ApiOutlined />, label: 'MCP 管理' },
+  { key: '/feishu', icon: <CloudServerOutlined />, label: '飞书工作台' },
   { key: '/system', icon: <ControlOutlined />, label: '系统控制' },
 ]
 

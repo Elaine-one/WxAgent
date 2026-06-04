@@ -1,4 +1,6 @@
+import asyncio
 import importlib
+import inspect
 import logging
 from pathlib import Path
 from typing import Callable
@@ -11,11 +13,12 @@ logger = logging.getLogger("wxagent.tools")
 class ToolRegistry:
     _tools: dict[str, tuple[ToolDef, Callable]] = {}
     _metas: dict[str, ToolMeta] = {}
+    _mcp_handlers: dict[str, Callable] = {}
     _discovered: bool = False
     _loaders: dict[ToolType, "ToolLoader"] = {}
 
     @classmethod
-    def register(cls, tool: ToolDef, handler: Callable, meta: ToolMeta = None) -> None:
+    def register(cls, tool: ToolDef, handler: Callable, meta: ToolMeta = None, is_mcp: bool = False) -> None:
         cls._tools[tool.name] = (tool, handler)
         if meta is None:
             meta = ToolMeta(
@@ -24,6 +27,8 @@ class ToolRegistry:
                 description=tool.description,
             )
         cls._metas[tool.name] = meta
+        if is_mcp:
+            cls._mcp_handlers[tool.name] = handler
         logger.debug(f"Tool registered: {tool.name} ({meta.type.value})")
 
     @classmethod
@@ -33,19 +38,72 @@ class ToolRegistry:
         logger.debug(f"Tool registered with meta: {tool.name} ({meta.type.value})")
 
     @classmethod
+    def register_mcp(cls, tool_def: ToolDef, handler: Callable, meta: ToolMeta) -> None:
+        cls.register(tool_def, handler, meta, is_mcp=True)
+        meta.type = ToolType.MCP
+
+    @classmethod
     def unregister(cls, name: str) -> bool:
         if name in cls._tools:
             del cls._tools[name]
             del cls._metas[name]
             logger.debug(f"Tool unregistered: {name}")
             return True
-        for key, m in cls._metas.items():
-            if m.name == name:
-                del cls._tools[key]
-                del cls._metas[key]
-                logger.debug(f"Tool unregistered: {key} (by meta.name={name})")
-                return True
         return False
+
+    @classmethod
+    def unregister_mcp(cls, server_name: str) -> None:
+        prefix = f"mcp_{server_name}_"
+        keys_to_remove = [k for k in cls._tools if k.startswith(prefix)]
+        for key in keys_to_remove:
+            del cls._tools[key]
+            cls._metas.pop(key, None)
+            cls._mcp_handlers.pop(key, None)
+        if keys_to_remove:
+            logger.debug(f"MCP tools unregistered for server '{server_name}': {keys_to_remove}")
+
+    @classmethod
+    def get_mcp_tools(cls) -> list[ToolDef]:
+        return [td for name, (td, _) in cls._tools.items() if name in cls._mcp_handlers]
+
+    @classmethod
+    def _run_handler(cls, handler: Callable, args: dict, state, user_id: str):
+        """执行工具 handler，处理同步/异步调度。"""
+        if inspect.iscoroutinefunction(handler):
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    return pool.submit(asyncio.run, handler(**args, state=state, user_id=user_id)).result()
+            else:
+                return asyncio.run(handler(**args, state=state, user_id=user_id))
+        else:
+            return handler(**args, state=state, user_id=user_id)
+
+    @classmethod
+    async def aexecute(cls, name: str, args: dict, state, user_id: str) -> ToolResult:
+        """异步执行工具 handler。在异步上下文中直接 await，避免 asyncio.run() 导致的事件循环问题。"""
+        if name not in cls._tools:
+            return ToolResult(success=False, error=f"未知工具: {name}")
+        meta = cls._metas.get(name)
+        if meta and not meta.enabled:
+            return ToolResult(success=False, error=f"工具已禁用: {name}")
+        tool_def, handler = cls._tools[name]
+        handler_to_call = cls._mcp_handlers.get(name, handler)
+        try:
+            if inspect.iscoroutinefunction(handler_to_call):
+                output = await handler_to_call(**args, state=state, user_id=user_id)
+            else:
+                output = handler_to_call(**args, state=state, user_id=user_id)
+            if isinstance(output, ToolResult):
+                return output
+            return ToolResult(success=True, content=str(output))
+        except Exception as e:
+            logger.exception(f"Tool execution failed: {name}")
+            return ToolResult(success=False, error=str(e))
 
     @classmethod
     def execute(cls, name: str, args: dict, state, user_id: str) -> ToolResult:
@@ -55,14 +113,16 @@ class ToolRegistry:
         if meta and not meta.enabled:
             return ToolResult(success=False, error=f"工具已禁用: {name}")
         tool_def, handler = cls._tools[name]
+        handler_to_call = cls._mcp_handlers.get(name, handler)
         try:
-            output = handler(**args, state=state, user_id=user_id)
+            output = cls._run_handler(handler_to_call, args, state, user_id)
             if isinstance(output, ToolResult):
                 return output
             return ToolResult(success=True, content=str(output))
         except Exception as e:
             logger.exception(f"Tool execution failed: {name}")
             return ToolResult(success=False, error=str(e))
+
 
     @classmethod
     def get_all_defs(cls, enabled_only: bool = False) -> list[ToolDef]:
@@ -72,13 +132,7 @@ class ToolRegistry:
 
     @classmethod
     def get_meta(cls, name: str) -> ToolMeta | None:
-        meta = cls._metas.get(name)
-        if meta:
-            return meta
-        for m in cls._metas.values():
-            if m.name == name:
-                return m
-        return None
+        return cls._metas.get(name)
 
     @classmethod
     def get_all_metas(cls, type: ToolType = None, enabled: bool = None) -> list[ToolMeta]:
@@ -95,11 +149,6 @@ class ToolRegistry:
             cls._metas[name].enabled = enabled
             logger.info(f"Tool {name} {'enabled' if enabled else 'disabled'}")
             return True
-        for key, m in cls._metas.items():
-            if m.name == name:
-                m.enabled = enabled
-                logger.info(f"Tool {name} {'enabled' if enabled else 'disabled'}")
-                return True
         return False
 
     @classmethod
@@ -111,6 +160,7 @@ class ToolRegistry:
     def clear(cls) -> None:
         cls._tools.clear()
         cls._metas.clear()
+        cls._mcp_handlers.clear()
         cls._discovered = False
 
     @classmethod
@@ -288,8 +338,17 @@ class ToolRegistry:
 
     @classmethod
     def reload(cls, paths: list[str] = None) -> list[ToolMeta]:
+        # Save MCP tools before clearing
+        mcp_tools = {k: v for k, v in cls._tools.items() if k in cls._mcp_handlers}
+        mcp_metas = {k: v for k, v in cls._metas.items() if k in cls._mcp_handlers}
+        mcp_handlers = dict(cls._mcp_handlers)
         cls.clear()
-        return cls.discover(paths)
+        result = cls.discover(paths)
+        # Restore MCP tools
+        cls._tools.update(mcp_tools)
+        cls._metas.update(mcp_metas)
+        cls._mcp_handlers.update(mcp_handlers)
+        return result
 
     @classmethod
     def get_stats(cls) -> dict:

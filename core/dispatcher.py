@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import threading
 import time
 from collections import OrderedDict
 
@@ -22,12 +24,21 @@ class Dispatcher:
         self.memory = memory
         self.deps: Deps = getattr(graph, "_deps", None)
         self._sessions: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        # 持久事件循环：所有异步操作共享，避免 asyncio.run() 反复创建/销毁循环
+        self._loop = asyncio.new_event_loop()
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
         self._setup_task_callback()
 
     def _configurable(self, uid: str) -> dict:
         if self.deps:
             self.deps.session = self.session
         return {"configurable": {"thread_id": uid, "deps": self.deps}}
+
+    def _run_async(self, coro):
+        """在持久事件循环中运行异步协程并等待结果。"""
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result()
 
     def _get_or_create_state(self, uid: str) -> dict:
         now = time.time()
@@ -68,6 +79,29 @@ class Dispatcher:
             if val:
                 media_state[state_key] = [val]
 
+        # 多语音合并时，使用完整列表覆盖单条
+        all_voice_urls = getattr(msg, "_all_voice_urls", None)
+        all_voice_media_refs = getattr(msg, "_all_voice_media_refs", None)
+        if all_voice_urls:
+            media_state["voice_urls"] = all_voice_urls
+        if all_voice_media_refs:
+            media_state["voice_media_refs"] = all_voice_media_refs
+
+        # 流式发送回调：边收边发，记录已发送的字符数
+        _stream_sent_chars = [0]  # 用列表以便在闭包中修改
+
+        def _stream_callback(text: str):
+            try:
+                send_message(self.session, uid, text)
+                _stream_sent_chars[0] += len(text)
+                time.sleep(config.ADV_BUBBLE_SEND_INTERVAL)
+            except Exception:
+                pass
+
+        # 通过 Deps（configurable 通道）传递回调，不放入 state（避免序列化失败）
+        if self.deps:
+            self.deps.stream_callback = _stream_callback
+
         try:
             snapshot = self.graph.get_state(configurable)
         except Exception:
@@ -82,13 +116,13 @@ class Dispatcher:
                 }
                 self.graph.update_state(configurable, state_update, as_node="wait_user")
                 logger.info("interrupt_resume", extra={"user_id": uid, "user_input": msg.text[:80]})
-                result = self.graph.invoke(None, configurable)
+                result = self._run_async(self.graph.ainvoke(None, configurable))
             else:
                 state = self._get_or_create_state(uid)
                 state["user_input"] = msg.text
                 state["msg_type"] = msg.msg_type
                 state.update(media_state)
-                result = self.graph.invoke(state, configurable)
+                result = self._run_async(self.graph.ainvoke(state, configurable))
         else:
             state = self._get_or_create_state(uid)
             if state.get("task_complete"):
@@ -98,7 +132,11 @@ class Dispatcher:
             state.update(media_state)
             state["interrupted"] = bool(state.get("messages") and len(state.get("messages", [])) > 1 and not state.get("task_complete"))
             logger.info("new_invocation", extra={"user_id": uid, "user_input": msg.text[:80]})
-            result = self.graph.invoke(state, configurable)
+            result = self._run_async(self.graph.ainvoke(state, configurable))
+
+        # 清理 deps 上的回调
+        if self.deps:
+            self.deps.stream_callback = None
 
         if result is not None:
             self._save_state(uid, result)
@@ -114,8 +152,17 @@ class Dispatcher:
                         pass
 
         if result and result.get("final_response"):
-            logger.info("send_response", extra={"user_id": uid, "text_preview": result["final_response"][:200], "text_len": len(result["final_response"])})
-            self._send_bubbles(uid, result["final_response"])
+            # 流式回调已发送部分文本，只发送剩余部分
+            full_text = result["final_response"]
+            if _stream_sent_chars[0] > 0 and _stream_sent_chars[0] < len(full_text):
+                remaining = full_text[_stream_sent_chars[0]:]
+                if remaining.strip():
+                    logger.info("send_remaining", extra={"user_id": uid, "sent": _stream_sent_chars[0], "remaining": len(remaining)})
+                    self._send_bubbles(uid, remaining)
+            elif _stream_sent_chars[0] == 0:
+                # 没有通过流式回调发送，走常规气泡发送
+                logger.info("send_response", extra={"user_id": uid, "text_preview": full_text[:200], "text_len": len(full_text)})
+                self._send_bubbles(uid, full_text)
         elif result and result.get("pending_confirmation") and not result.get("task_complete"):
             detail = result["pending_confirmation"]
             confirm_text = self._format_confirmation(detail)
@@ -184,7 +231,7 @@ class Dispatcher:
         return {
             "user_id": uid,
             "task_id": "",
-            "messages": [{"role": "system", "content": config.SYSTEM_PROMPT}],
+            "messages": [{"role": "system", "content": config.get_system_prompt()}],
             "user_input": "",
             "last_error": "",
             "pending_confirmation": {},

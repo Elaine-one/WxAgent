@@ -3,7 +3,7 @@ import sys
 
 from langgraph.graph import END, StateGraph
 
-from core.deps import Deps
+from core.deps import Deps, get_deps
 from core.state import AgentState
 from core.nodes.classify import classify_node
 from core.nodes.react import react_node
@@ -105,29 +105,40 @@ def _after_react(state: AgentState) -> str:
     return "respond"
 
 
-def _get_deps(config: dict | None) -> Deps:
-    if config:
-        deps = config.get("configurable", {}).get("deps")
-        if deps is not None:
-            return deps
-    raise RuntimeError("Deps not found in config — graph was not initialized correctly")
-
-
 def wait_user_node(state: AgentState) -> AgentState:
     return state
 
 
 def handle_meta_node(state: AgentState, config) -> AgentState:
-    deps = _get_deps(config)
-    inp = state["user_input"].strip().lower()
-    if inp.startswith("/help"):
+    deps = get_deps(config)
+    inp = state["user_input"].strip()
+    inp_lower = inp.lower()
+
+    if inp_lower.startswith("/help"):
         tool_list = "\n".join(f"  {t.name}: {t.description}" for t in deps.tools)
-        state["final_response"] = f"可用命令：\n/help /status /tasks /usage /reset\n\n可用工具：\n{tool_list}"
-    elif inp.startswith("/status"):
+        state["final_response"] = (
+            f"可用命令：\n"
+            f"/help /status /tasks /usage /reset\n"
+            f"/cal - 查看飞书日历\n"
+            f"/doc <标题> - 创建飞书文档\n"
+            f"/msg <内容> - 发送飞书消息\n"
+            f"\n可用工具：\n{tool_list}"
+        )
+    elif inp_lower.startswith("/status"):
         state["final_response"] = f"会话正常 | 用户: {state['user_id']}"
-    elif inp.startswith("/tasks"):
-        state["final_response"] = "没有正在执行的任务"
-    elif inp.startswith("/usage"):
+    elif inp_lower.startswith("/tasks"):
+        try:
+            from tasks.manager import get_task_manager
+            tm = get_task_manager()
+            running = tm.list_running()
+            if running:
+                task_lines = [f"  [{t.status.value}] {t.task_type} ({t.task_id})" for t in running]
+                state["final_response"] = f"正在执行的任务 ({len(running)}):\n" + "\n".join(task_lines)
+            else:
+                state["final_response"] = "没有正在执行的任务"
+        except Exception:
+            state["final_response"] = "没有正在执行的任务"
+    elif inp_lower.startswith("/usage"):
         cost = state.get("cost", {})
         state["final_response"] = (
             f"LLM 使用统计\n"
@@ -135,12 +146,32 @@ def handle_meta_node(state: AgentState, config) -> AgentState:
             f"Token 消耗: {cost.get('total_tokens', 0):,}\n"
             f"估算费用: ${cost.get('estimated_usd', 0):.4f}"
         )
-    elif inp.startswith("/reset"):
+    elif inp_lower.startswith("/reset"):
         state["last_error"] = ""
         state["pending_confirmation"] = {}
         state["confirmation_response"] = ""
         state["task_complete"] = True
         state["final_response"] = "已重置会话状态"
+    elif inp_lower.startswith("/cal"):
+        state["user_input"] = "查看我的飞书日历"
+        state["msg_type"] = "new_task"
+        state["task_complete"] = False
+        return state
+    elif inp_lower.startswith("/doc"):
+        title = inp[4:].strip() if len(inp) > 4 else "新建文档"
+        state["user_input"] = f"在飞书创建一个文档，标题是：{title}"
+        state["msg_type"] = "new_task"
+        state["task_complete"] = False
+        return state
+    elif inp_lower.startswith("/msg"):
+        content = inp[4:].strip() if len(inp) > 4 else ""
+        if content:
+            state["user_input"] = f"在飞书发送消息：{content}"
+        else:
+            state["user_input"] = "发送飞书消息"
+        state["msg_type"] = "new_task"
+        state["task_complete"] = False
+        return state
     else:
         state["final_response"] = "未知命令。输入 /help 查看可用命令。"
     state["task_complete"] = True
@@ -154,7 +185,7 @@ def handle_interrupt_node(state: AgentState, config) -> AgentState:
 
 
 def handle_confirm_node(state: AgentState, config) -> AgentState:
-    deps = _get_deps(config)
+    deps = get_deps(config)
     real_session = deps.real_session(config)
     pending = state.get("pending_confirmation", {})
     confirm_type = pending.get("type", "confirm")
@@ -171,13 +202,6 @@ def handle_confirm_node(state: AgentState, config) -> AgentState:
             result_text = f"错误：{result.error or '执行失败'}"
         state["messages"] = [{"role": "tool", "content": result_text, "tool_call_id": tool_call_id}]
         logger.info("dangerous_command_confirmed", extra={"user_id": state.get("user_id", ""), "command": command[:200], "success": result.success})
-
-    elif confirm_type == "cloud_consent":
-        from security.data_border import get_consent_db
-        consent_db = get_consent_db()
-        consent_db.record_consent(state.get("user_id", ""), "DuckDuckGo 搜索引擎", True)
-        state["messages"] = [{"role": "tool", "content": "云端访问已授权", "tool_call_id": tool_call_id}]
-        logger.info("cloud_consent_confirmed", extra={"user_id": state.get("user_id", "")})
 
     elif confirm_type == "pip_install":
         package_name = pending.get("package_name", "")

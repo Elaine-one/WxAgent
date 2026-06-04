@@ -13,7 +13,6 @@ sentence-transformers>=2.0
 apscheduler>=3.10,<4.0
 sqlalchemy>=2.0
 jieba>=0.42
-duckduckgo-search>=6.0
 beautifulsoup4>=4.12
 readability-lxml>=0.8
 openpyxl>=3.1
@@ -23,6 +22,14 @@ pyperclip>=1.8
 fastapi>=0.115
 pydantic>=2.0
 uvicorn>=0.30
+
+# MCP protocol + Feishu integration
+mcp>=1.0
+lark-oapi>=1.0
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.23
 
 # Optional dependencies (missing = graceful degradation, not errors)
 # Audio transcription: SILK decode + Whisper STT

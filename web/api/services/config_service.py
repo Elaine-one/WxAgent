@@ -1,11 +1,10 @@
-import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
 import yaml
 
-import config as cfg
+import config as _config_module
 
 from web.api.models.schemas import (
     AdvancedConfig,
@@ -224,9 +223,9 @@ def get_router_config() -> ModelRouterConfig:
     for name, route_data in yaml_cfg.get("routes", {}).items():
         route = ModelRouteConfig(**route_data)
         if name == "vision":
-            vision_model = cfg.VISION_MODEL or route.model
-            vision_base_url = cfg.VISION_BASE_URL or route.base_url
-            vision_source = ".env" if cfg.VISION_MODEL else "yaml"
+            vision_model = _config_module.VISION_MODEL or route.model
+            vision_base_url = _config_module.VISION_BASE_URL or route.base_url
+            vision_source = ".env" if _config_module.VISION_MODEL else "yaml"
             routes[name] = ModelRouteConfig(
                 model=vision_model,
                 provider=route.provider,
@@ -259,20 +258,20 @@ def update_router_config(config: ModelRouterConfig) -> None:
 
 
 def get_security_config() -> SecurityConfig:
-    cfg = read_yaml().get("security", {})
-    risk_data = cfg.get("risk_levels", {})
+    yaml_data = read_yaml().get("security", {})
+    risk_data = yaml_data.get("risk_levels", {})
     risk_levels = RiskLevelsConfig(
         safe=risk_data.get("safe", []),
         caution=risk_data.get("caution", []),
         dangerous=risk_data.get("dangerous", []),
     )
-    ps_data = cfg.get("path_sandbox", {})
+    ps_data = yaml_data.get("path_sandbox", {})
     path_sandbox = PathSandboxConfig(
         write_roots=ps_data.get("write_roots", []),
         read_roots=ps_data.get("read_roots", []),
         denied_patterns=ps_data.get("denied_patterns", []),
     )
-    ai_data = cfg.get("ai_reviewer", {})
+    ai_data = yaml_data.get("ai_reviewer", {})
     ai_reviewer = AIReviewerConfig(
         enabled=ai_data.get("enabled", True),
         review_levels=ai_data.get("review_levels", []),
@@ -280,7 +279,7 @@ def get_security_config() -> SecurityConfig:
         max_command_length=ai_data.get("max_command_length", 500),
     )
     return SecurityConfig(
-        dev_mode=cfg.get("dev_mode", False),
+        dev_mode=yaml_data.get("dev_mode", False),
         risk_levels=risk_levels,
         path_sandbox=path_sandbox,
         ai_reviewer=ai_reviewer,
@@ -300,9 +299,9 @@ def update_security_config(config: SecurityConfig) -> None:
 
 
 def get_limits_config() -> LimitsConfig:
-    cfg = read_yaml()
-    limits = cfg.get("limits", {})
-    adv = cfg.get("advanced", {})
+    yaml_data = read_yaml()
+    limits = yaml_data.get("limits", {})
+    adv = yaml_data.get("advanced", {})
     return LimitsConfig(
         max_llm_calls_per_task=limits.get("max_llm_calls_per_task", 10),
         max_history=limits.get("max_history", 20),
@@ -336,11 +335,11 @@ def update_limits_config(config: LimitsConfig) -> None:
 
 def get_workspace_config() -> WorkspaceConfig:
     env = read_env()
-    cfg = read_yaml().get("workspace", {})
+    yaml_data = read_yaml().get("workspace", {})
     return WorkspaceConfig(
-        dir=env.get("WORKSPACE_DIR", cfg.get("dir", "workspace")),
-        subdirs=cfg.get("subdirs", []),
-        venv_packages=cfg.get("venv_packages", {}),
+        dir=env.get("WORKSPACE_DIR", yaml_data.get("dir", "workspace")),
+        subdirs=yaml_data.get("subdirs", []),
+        venv_packages=yaml_data.get("venv_packages", {}),
     )
 
 
@@ -360,15 +359,15 @@ def update_workspace_config(config: WorkspaceConfig) -> None:
 
 
 def get_indexer_config() -> IndexerConfig:
-    cfg = read_yaml().get("indexer", {})
+    yaml_data = read_yaml().get("indexer", {})
     return IndexerConfig(
-        enabled=cfg.get("enabled", False),
-        watch_dirs=cfg.get("watch_dirs", []),
-        supported_types=cfg.get("supported_types", []),
-        idle_cpu_threshold=cfg.get("idle_cpu_threshold", 20),
-        scan_interval_seconds=cfg.get("scan_interval_seconds", 300),
-        max_document_chars=cfg.get("max_document_chars", 8000),
-        use_watchdog=cfg.get("use_watchdog", True),
+        enabled=yaml_data.get("enabled", False),
+        watch_dirs=yaml_data.get("watch_dirs", []),
+        supported_types=yaml_data.get("supported_types", []),
+        idle_cpu_threshold=yaml_data.get("idle_cpu_threshold", 20),
+        scan_interval_seconds=yaml_data.get("scan_interval_seconds", 300),
+        max_document_chars=yaml_data.get("max_document_chars", 8000),
+        use_watchdog=yaml_data.get("use_watchdog", True),
     )
 
 
@@ -378,15 +377,15 @@ def update_indexer_config(config: IndexerConfig) -> None:
 
 
 def get_retriever_config() -> RetrieverConfig:
-    cfg = read_yaml().get("retriever", {})
+    yaml_data = read_yaml().get("retriever", {})
     return RetrieverConfig(
-        vector_weight=cfg.get("vector_weight", 0.5),
-        keyword_weight=cfg.get("keyword_weight", 0.3),
-        time_decay_weight=cfg.get("time_decay_weight", 0.2),
-        time_decay_half_life_days=cfg.get("time_decay_half_life_days", 30),
-        default_scope=cfg.get("default_scope", []),
-        default_top_k=cfg.get("default_top_k", 10),
-        embedding_model=cfg.get("embedding_model", "BAAI/bge-small-zh"),
+        vector_weight=yaml_data.get("vector_weight", 0.5),
+        keyword_weight=yaml_data.get("keyword_weight", 0.3),
+        time_decay_weight=yaml_data.get("time_decay_weight", 0.2),
+        time_decay_half_life_days=yaml_data.get("time_decay_half_life_days", 30),
+        default_scope=yaml_data.get("default_scope", []),
+        default_top_k=yaml_data.get("default_top_k", 10),
+        embedding_model=yaml_data.get("embedding_model", "BAAI/bge-small-zh"),
     )
 
 
@@ -396,8 +395,8 @@ def update_retriever_config(config: RetrieverConfig) -> None:
 
 
 def get_memory_config() -> MemoryConfig:
-    cfg = read_yaml()
-    adv = cfg.get("advanced", {})
+    yaml_data = read_yaml()
+    adv = yaml_data.get("advanced", {})
     return MemoryConfig(
         indexer=get_indexer_config(),
         retriever=get_retriever_config(),
@@ -422,49 +421,49 @@ def update_memory_config(config: MemoryConfig) -> None:
 
 
 def get_tools_config() -> ToolsConfig:
-    cfg = read_yaml().get("advanced", {})
+    yaml_data = read_yaml().get("advanced", {})
     return ToolsConfig(
         aria2=Aria2Config(
-            rpc_url=cfg.get("aria2_rpc_url", "http://localhost:6800/jsonrpc"),
-            rpc_timeout=cfg.get("aria2_rpc_timeout", 5),
+            rpc_url=yaml_data.get("aria2_rpc_url", "http://localhost:6800/jsonrpc"),
+            rpc_timeout=yaml_data.get("aria2_rpc_timeout", 5),
         ),
         whisper=WhisperConfig(
-            model=cfg.get("whisper_model", "base"),
-            device=cfg.get("whisper_device", "cpu"),
-            compute_type=cfg.get("whisper_compute_type", "int8"),
-            cloud_model=cfg.get("whisper_cloud_model", "whisper-1"),
-            silk_decode_timeout=cfg.get("silk_decode_timeout", 30),
-            ffmpeg_audio_extract_timeout=cfg.get("ffmpeg_audio_extract_timeout", 300),
-            ffmpeg_sample_rate=cfg.get("ffmpeg_sample_rate", 24000),
+            model=yaml_data.get("whisper_model", "base"),
+            device=yaml_data.get("whisper_device", "cpu"),
+            compute_type=yaml_data.get("whisper_compute_type", "int8"),
+            cloud_model=yaml_data.get("whisper_cloud_model", "whisper-1"),
+            silk_decode_timeout=yaml_data.get("silk_decode_timeout", 30),
+            ffmpeg_audio_extract_timeout=yaml_data.get("ffmpeg_audio_extract_timeout", 300),
+            ffmpeg_sample_rate=yaml_data.get("ffmpeg_sample_rate", 24000),
         ),
         ocr=OCRConfig(
-            lang=cfg.get("ocr_lang", "ch"),
-            fallback_model=cfg.get("ocr_fallback_model", "gpt-4o"),
+            lang=yaml_data.get("ocr_lang", "ch"),
+            fallback_model=yaml_data.get("ocr_fallback_model", "gpt-4o"),
         ),
         web=WebConfig(
-            search_max_results=cfg.get("search_max_results", 5),
-            fetch_max_chars=cfg.get("web_fetch_max_chars", 8000),
-            fetch_timeout=cfg.get("web_fetch_timeout", 15),
-            github_mirrors=cfg.get("github_mirrors", ["https://ghfast.top", "https://gh-proxy.com", "https://ghproxy.cc"]),
+            search_max_results=yaml_data.get("search_max_results", 5),
+            fetch_max_chars=yaml_data.get("web_fetch_max_chars", 8000),
+            fetch_timeout=yaml_data.get("web_fetch_timeout", 15),
+            github_mirrors=yaml_data.get("github_mirrors", ["https://ghfast.top", "https://gh-proxy.com", "https://ghproxy.cc"]),
         ),
         download=DownloadConfig(
-            video_download_timeout=cfg.get("video_download_timeout", 3600),
-            http_download_timeout=cfg.get("http_download_timeout", 180),
-            file_size_limit_mb=cfg.get("file_size_limit_mb", 50),
-            cdn_download_timeout=cfg.get("cdn_download_timeout", 60),
-            image_download_timeout=cfg.get("image_download_timeout", 15),
+            video_download_timeout=yaml_data.get("video_download_timeout", 3600),
+            http_download_timeout=yaml_data.get("http_download_timeout", 180),
+            file_size_limit_mb=yaml_data.get("file_size_limit_mb", 50),
+            cdn_download_timeout=yaml_data.get("cdn_download_timeout", 60),
+            image_download_timeout=yaml_data.get("image_download_timeout", 15),
         ),
         file=FileConfig(
-            file_size_limit_mb=cfg.get("file_size_limit_mb", 50),
-            file_read_max_chars=cfg.get("file_read_max_chars", 100000),
+            file_size_limit_mb=yaml_data.get("file_size_limit_mb", 50),
+            file_read_max_chars=yaml_data.get("file_read_max_chars", 100000),
         ),
         code=CodeConfig(
-            pip_install_timeout=cfg.get("pip_install_timeout", 120),
-            total_output_limit=cfg.get("code_total_output_limit", 100000),
+            pip_install_timeout=yaml_data.get("pip_install_timeout", 120),
+            total_output_limit=yaml_data.get("code_total_output_limit", 100000),
         ),
         tasks=TasksConfig(
-            io_pool_max_workers=cfg.get("io_pool_max_workers", 8),
-            cpu_pool_max_workers=cfg.get("cpu_pool_max_workers", 2),
+            io_pool_max_workers=yaml_data.get("io_pool_max_workers", 8),
+            cpu_pool_max_workers=yaml_data.get("cpu_pool_max_workers", 2),
         ),
     )
 
@@ -514,13 +513,13 @@ _DEFAULT_AI_SAFETY_PROMPT = '判断以下命令是否有恶意意图。只回复
 
 
 def get_prompts_config() -> PromptsConfig:
-    cfg = read_yaml().get("prompts", {})
+    yaml_data = read_yaml().get("prompts", {})
     return PromptsConfig(
-        system_prompt=cfg.get("system_prompt", _DEFAULT_SYSTEM_PROMPT),
-        classify_prompt=cfg.get("classify_prompt", _DEFAULT_CLASSIFY_PROMPT),
-        vision_prompt=cfg.get("vision_prompt", _DEFAULT_VISION_PROMPT),
-        preference_extract_prompt=cfg.get("preference_extract_prompt", _DEFAULT_PREFERENCE_EXTRACT_PROMPT),
-        ai_safety_prompt=cfg.get("ai_safety_prompt", _DEFAULT_AI_SAFETY_PROMPT),
+        system_prompt=yaml_data.get("system_prompt", _DEFAULT_SYSTEM_PROMPT),
+        classify_prompt=yaml_data.get("classify_prompt", _DEFAULT_CLASSIFY_PROMPT),
+        vision_prompt=yaml_data.get("vision_prompt", _DEFAULT_VISION_PROMPT),
+        preference_extract_prompt=yaml_data.get("preference_extract_prompt", _DEFAULT_PREFERENCE_EXTRACT_PROMPT),
+        ai_safety_prompt=yaml_data.get("ai_safety_prompt", _DEFAULT_AI_SAFETY_PROMPT),
     )
 
 
@@ -529,9 +528,9 @@ def update_prompts_config(config: PromptsConfig) -> None:
 
 
 def get_system_control_config() -> SystemControlConfig:
-    cfg = read_yaml().get("system_control", {})
+    yaml_data = read_yaml().get("system_control", {})
     actions = {}
-    for name, a_data in cfg.get("actions", {}).items():
+    for name, a_data in yaml_data.get("actions", {}).items():
         actions[name] = SystemControlAction(
             command=a_data.get("command", ""),
             risk=a_data.get("risk", "safe"),
@@ -540,7 +539,7 @@ def get_system_control_config() -> SystemControlConfig:
         )
     return SystemControlConfig(
         actions=actions,
-        app_whitelist=cfg.get("app_whitelist", {}),
+        app_whitelist=yaml_data.get("app_whitelist", {}),
     )
 
 
@@ -561,8 +560,8 @@ def update_system_control_config(config: SystemControlConfig) -> None:
 
 
 def get_file_organize_config() -> FileOrganizeConfig:
-    cfg = read_yaml().get("file_organize", {})
-    rules_data = cfg.get("rules", {})
+    yaml_data = read_yaml().get("file_organize", {})
+    rules_data = yaml_data.get("rules", {})
     rules = FileOrganizeRuleConfig(
         by_type=rules_data.get("by_type", {}),
         by_date=rules_data.get("by_date", {}),
@@ -577,51 +576,51 @@ def update_file_organize_config(config: FileOrganizeConfig) -> None:
 
 
 def get_advanced_config() -> AdvancedConfig:
-    cfg = read_yaml().get("advanced", {})
+    yaml_data = read_yaml().get("advanced", {})
     return AdvancedConfig(
-        max_tokens=cfg.get("max_tokens", 2048),
-        max_chars=cfg.get("max_chars", 480),
-        debounce_delay=cfg.get("debounce_delay", 3.0),
-        max_sessions=cfg.get("max_sessions", 100),
-        session_ttl_seconds=cfg.get("session_ttl_seconds", 86400),
-        messages_window=cfg.get("messages_window", 50),
-        short_term_max_messages=cfg.get("short_term_max_messages", 50),
-        long_term_max_messages=cfg.get("long_term_max_messages", 20),
-        embedding_model=cfg.get("embedding_model", "BAAI/bge-small-zh"),
-        llm_fallback_timeout=cfg.get("llm_fallback_timeout", 30.0),
-        aria2_rpc_url=cfg.get("aria2_rpc_url", "http://localhost:6800/jsonrpc"),
-        github_mirrors=cfg.get("github_mirrors", ["https://ghfast.top", "https://gh-proxy.com", "https://ghproxy.cc"]),
-        whisper_model=cfg.get("whisper_model", "base"),
-        whisper_device=cfg.get("whisper_device", "cpu"),
-        whisper_compute_type=cfg.get("whisper_compute_type", "int8"),
-        whisper_cloud_model=cfg.get("whisper_cloud_model", "whisper-1"),
-        ocr_lang=cfg.get("ocr_lang", "ch"),
-        search_max_results=cfg.get("search_max_results", 5),
-        web_fetch_max_chars=cfg.get("web_fetch_max_chars", 8000),
-        io_pool_max_workers=cfg.get("io_pool_max_workers", 8),
-        cpu_pool_max_workers=cfg.get("cpu_pool_max_workers", 2),
-        pip_install_timeout=cfg.get("pip_install_timeout", 120),
-        video_download_timeout=cfg.get("video_download_timeout", 3600),
-        http_download_timeout=cfg.get("http_download_timeout", 180),
-        file_size_limit_mb=cfg.get("file_size_limit_mb", 50),
-        preference_extract_model=cfg.get("preference_extract_model", "deepseek-chat"),
-        ocr_fallback_model=cfg.get("ocr_fallback_model", "gpt-4o"),
-        bubble_send_interval=cfg.get("bubble_send_interval", 0.3),
-        web_fetch_timeout=cfg.get("web_fetch_timeout", 15),
-        aria2_rpc_timeout=cfg.get("aria2_rpc_timeout", 5),
-        silk_decode_timeout=cfg.get("silk_decode_timeout", 30),
-        ffmpeg_audio_extract_timeout=cfg.get("ffmpeg_audio_extract_timeout", 300),
-        ffmpeg_sample_rate=cfg.get("ffmpeg_sample_rate", 24000),
-        cdn_download_timeout=cfg.get("cdn_download_timeout", 60),
-        image_download_timeout=cfg.get("image_download_timeout", 15),
-        api_timeout=cfg.get("api_timeout", 15),
-        upload_timeout=cfg.get("upload_timeout", 60),
-        file_read_max_chars=cfg.get("file_read_max_chars", 100000),
-        tool_result_max_chars=cfg.get("tool_result_max_chars", 4000),
-        code_total_output_limit=cfg.get("code_total_output_limit", 100000),
-        memory_search_top_k=cfg.get("memory_search_top_k", 3),
-        relevance_threshold=cfg.get("relevance_threshold", 0.5),
-        preference_confidence_threshold=cfg.get("preference_confidence_threshold", 0.6),
+        max_tokens=yaml_data.get("max_tokens", 2048),
+        max_chars=yaml_data.get("max_chars", 480),
+        debounce_delay=yaml_data.get("debounce_delay", 3.0),
+        max_sessions=yaml_data.get("max_sessions", 100),
+        session_ttl_seconds=yaml_data.get("session_ttl_seconds", 86400),
+        messages_window=yaml_data.get("messages_window", 50),
+        short_term_max_messages=yaml_data.get("short_term_max_messages", 50),
+        long_term_max_messages=yaml_data.get("long_term_max_messages", 20),
+        embedding_model=yaml_data.get("embedding_model", "BAAI/bge-small-zh"),
+        llm_fallback_timeout=yaml_data.get("llm_fallback_timeout", 30.0),
+        aria2_rpc_url=yaml_data.get("aria2_rpc_url", "http://localhost:6800/jsonrpc"),
+        github_mirrors=yaml_data.get("github_mirrors", ["https://ghfast.top", "https://gh-proxy.com", "https://ghproxy.cc"]),
+        whisper_model=yaml_data.get("whisper_model", "base"),
+        whisper_device=yaml_data.get("whisper_device", "cpu"),
+        whisper_compute_type=yaml_data.get("whisper_compute_type", "int8"),
+        whisper_cloud_model=yaml_data.get("whisper_cloud_model", "whisper-1"),
+        ocr_lang=yaml_data.get("ocr_lang", "ch"),
+        search_max_results=yaml_data.get("search_max_results", 5),
+        web_fetch_max_chars=yaml_data.get("web_fetch_max_chars", 8000),
+        io_pool_max_workers=yaml_data.get("io_pool_max_workers", 8),
+        cpu_pool_max_workers=yaml_data.get("cpu_pool_max_workers", 2),
+        pip_install_timeout=yaml_data.get("pip_install_timeout", 120),
+        video_download_timeout=yaml_data.get("video_download_timeout", 3600),
+        http_download_timeout=yaml_data.get("http_download_timeout", 180),
+        file_size_limit_mb=yaml_data.get("file_size_limit_mb", 50),
+        preference_extract_model=yaml_data.get("preference_extract_model", "deepseek-chat"),
+        ocr_fallback_model=yaml_data.get("ocr_fallback_model", "gpt-4o"),
+        bubble_send_interval=yaml_data.get("bubble_send_interval", 0.3),
+        web_fetch_timeout=yaml_data.get("web_fetch_timeout", 15),
+        aria2_rpc_timeout=yaml_data.get("aria2_rpc_timeout", 5),
+        silk_decode_timeout=yaml_data.get("silk_decode_timeout", 30),
+        ffmpeg_audio_extract_timeout=yaml_data.get("ffmpeg_audio_extract_timeout", 300),
+        ffmpeg_sample_rate=yaml_data.get("ffmpeg_sample_rate", 24000),
+        cdn_download_timeout=yaml_data.get("cdn_download_timeout", 60),
+        image_download_timeout=yaml_data.get("image_download_timeout", 15),
+        api_timeout=yaml_data.get("api_timeout", 15),
+        upload_timeout=yaml_data.get("upload_timeout", 60),
+        file_read_max_chars=yaml_data.get("file_read_max_chars", 100000),
+        tool_result_max_chars=yaml_data.get("tool_result_max_chars", 4000),
+        code_total_output_limit=yaml_data.get("code_total_output_limit", 100000),
+        memory_search_top_k=yaml_data.get("memory_search_top_k", 3),
+        relevance_threshold=yaml_data.get("relevance_threshold", 0.5),
+        preference_confidence_threshold=yaml_data.get("preference_confidence_threshold", 0.6),
     )
 
 
@@ -696,3 +695,10 @@ def validate_config(module: str, data: dict) -> list[str]:
     except Exception as e:
         errors.append(str(e))
     return errors
+
+
+def reload():
+    """重新加载配置文件到 Python config 模块。"""
+    import importlib
+    import config
+    importlib.reload(config)

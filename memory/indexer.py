@@ -6,18 +6,14 @@ from pathlib import Path
 import yaml
 
 import config
-from config import EMBEDDING_MODEL_PATH, PROJECT_ROOT, WORKSPACE_DIR
+from config import PROJECT_ROOT, WORKSPACE_DIR
+from memory.embedding import get_embedding_fn
 
-_local_model = str(EMBEDDING_MODEL_PATH) if EMBEDDING_MODEL_PATH.exists() else config.ADV_EMBEDDING_MODEL
-_embedding_fn = None  # 延迟加载，避免 import 时触发模型下载/加载
+_embedding_fn = None  # deprecated: use get_embedding_fn() instead
 
 
 def _get_embedding_fn():
-    global _embedding_fn
-    if _embedding_fn is None:
-        from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
-        _embedding_fn = SentenceTransformerEmbeddingFunction(model_name=_local_model)
-    return _embedding_fn
+    return get_embedding_fn()
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +97,14 @@ class BackgroundIndexer:
 
     def stop(self):
         self._stop.set()
+        if self._observer:
+            try:
+                self._observer.stop()
+                self._observer.join(timeout=5)
+            except Exception:
+                pass
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
 
     def _start_watchdog(self):
         try:
