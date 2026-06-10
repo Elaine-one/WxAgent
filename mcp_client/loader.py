@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import os
 
 from mcp_client.client import MCPClient
 from tools.base import ToolDef, ToolMeta, ToolType
@@ -25,6 +26,12 @@ def get_mcp_loader() -> "MCPLoader":
 
 async def connect_server(name: str, config: dict) -> list[str]:
     """连接 MCP Server 并注册工具。"""
+    # 对 feishu_mcp 类型，从环境变量注入凭据
+    if config.get("transport") == "feishu_mcp":
+        app_id_env = config.pop("app_id_env", "FEISHU_APP_ID")
+        app_secret_env = config.pop("app_secret_env", "FEISHU_APP_SECRET")
+        config["app_id"] = os.environ.get(app_id_env, "")
+        config["app_secret"] = os.environ.get(app_secret_env, "")
     loader = get_mcp_loader()
     client = MCPClient(name=name, config=config)
     await client.connect()

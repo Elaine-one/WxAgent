@@ -330,11 +330,11 @@ async def _feishu_get_document(
 
 async def _feishu_add_document_blocks(
     document_id: str,
-    blocks: str,
+    blocks: list,
     state=None,
     user_id: str = "",
 ) -> ToolResult:
-    """向文档添加内容块。blocks 参数为 JSON 字符串，格式：
+    """向文档添加内容块。blocks 参数为内容块数组，格式：
     [{"block_type":"text","content":"文本"},{"block_type":"heading1","content":"标题"}]
     支持的 block_type: text, heading1-9, bullet, ordered, code, quote, todo, divider
     code 块可额外传 "language" 字段。
@@ -342,9 +342,21 @@ async def _feishu_add_document_blocks(
     if err := _check_config():
         return err
     try:
-        blocks_list = json.loads(blocks) if isinstance(blocks, str) else blocks
+        # 兼容字符串输入（LLM 可能仍传 JSON 字符串）
+        if isinstance(blocks, str):
+            try:
+                blocks_list = json.loads(blocks)
+            except json.JSONDecodeError as e:
+                return ToolResult(
+                    success=False,
+                    error=f"blocks JSON 解析失败: {e}。请确保传入完整的 JSON 数组。",
+                )
+        else:
+            blocks_list = blocks
         if not isinstance(blocks_list, list):
-            return ToolResult(success=False, error="blocks 参数必须是 JSON 数组")
+            return ToolResult(success=False, error="blocks 参数必须是数组")
+        if not blocks_list:
+            return ToolResult(success=False, error="blocks 数组不能为空")
         children = []
         for b in blocks_list:
             if not isinstance(b, dict):
@@ -386,10 +398,214 @@ async def _feishu_add_document_blocks(
             content=f"成功添加 {total_added} 个内容块到文档",
             display=f"飞书文档内容已更新（+{total_added}块）",
         )
-    except json.JSONDecodeError:
-        return ToolResult(success=False, error="blocks 参数 JSON 格式错误")
     except Exception as e:
         logger.exception("feishu_add_document_blocks failed")
+        return ToolResult(success=False, error=str(e))
+
+
+async def _feishu_get_document_blocks(
+    document_id: str, page_size: int = 500, state=None, user_id: str = ""
+) -> ToolResult:
+    """获取飞书文档的所有块信息，包括 block_id、类型和内容摘要。
+    返回的 block_id 可用于 feishu_update_document_block 和 feishu_delete_document_block。
+    """
+    if err := _check_config():
+        return err
+    try:
+        all_blocks = []
+        page_token = ""
+        while True:
+            params = {
+                "page_size": str(min(page_size, 500)),
+                "document_revision_id": "-1",
+            }
+            if page_token:
+                params["page_token"] = page_token
+            data = await _request(
+                "GET",
+                f"/open-apis/docx/v1/documents/{document_id}/blocks",
+                params=params,
+            )
+            if data.get("code") != 0:
+                return ToolResult(
+                    success=False, error=f"获取文档块失败: {data.get('msg', '')}"
+                )
+            items = data.get("data", {}).get("items", [])
+            all_blocks.extend(items)
+            page_token = data.get("data", {}).get("page_token", "")
+            if not page_token or not items:
+                break
+
+        if not all_blocks:
+            return ToolResult(success=True, content="文档暂无内容块")
+
+        # 格式化输出：提取关键信息
+        lines = [f"文档共 {len(all_blocks)} 个块：\n"]
+        for b in all_blocks:
+            block_id = b.get("block_id", "")
+            block_type = b.get("block_type", "")
+            # 提取文本内容摘要
+            text_preview = _extract_block_text(b, max_len=80)
+            lines.append(
+                f"- block_id: {block_id} | type: {block_type} | {text_preview}"
+            )
+        return ToolResult(
+            success=True,
+            content="\n".join(lines),
+            display=f"获取到 {len(all_blocks)} 个文档块",
+        )
+    except Exception as e:
+        logger.exception("feishu_get_document_blocks failed")
+        return ToolResult(success=False, error=str(e))
+
+
+def _extract_block_text(block: dict, max_len: int = 80) -> str:
+    """从块结构中提取文本内容摘要。"""
+    # 遍历块的各个可能包含文本的字段
+    for key in (
+        "text", "heading1", "heading2", "heading3", "heading4",
+        "heading5", "heading6", "heading7", "heading8", "heading9",
+        "bullet", "ordered", "code", "quote", "todo", "callout",
+    ):
+        section = block.get(key)
+        if section and isinstance(section, dict):
+            elements = section.get("elements", [])
+            texts = []
+            for el in elements:
+                text_run = el.get("text_run", {})
+                content = text_run.get("content", "")
+                if content:
+                    texts.append(content)
+            if texts:
+                full = "".join(texts)
+                if len(full) > max_len:
+                    return full[:max_len] + "..."
+                return full
+    return ""
+
+
+async def _feishu_update_document_block(
+    document_id: str,
+    block_id: str,
+    block_type: str = "",
+    content: str = "",
+    language: str = "",
+    state=None,
+    user_id: str = "",
+) -> ToolResult:
+    """更新飞书文档中指定块的内容。需要提供 block_id（可通过 feishu_get_document_blocks 获取）。
+    block_type 和 content 用于构建更新内容，支持的 block_type 同 feishu_add_document_blocks。
+    """
+    if err := _check_config():
+        return err
+    try:
+        if not content and not block_type:
+            return ToolResult(
+                success=False, error="必须提供 content 参数"
+            )
+        # 构建更新请求体 — 单块 PATCH 接口直接传操作字段，不需要 requests 数组
+        update_body = {}
+        if content:
+            elements = [{"text_run": {"content": content}}]
+            update_body["update_text_elements"] = {"elements": elements}
+
+        data = await _request(
+            "PATCH",
+            f"/open-apis/docx/v1/documents/{document_id}/blocks/{block_id}",
+            json=update_body,
+        )
+        if data.get("code") != 0:
+            return ToolResult(
+                success=False, error=f"更新块失败: {data.get('msg', '')}"
+            )
+        return ToolResult(
+            success=True,
+            content=f"块 {block_id} 更新成功",
+            display="飞书文档块已更新",
+        )
+    except Exception as e:
+        logger.exception("feishu_update_document_block failed")
+        return ToolResult(success=False, error=str(e))
+
+
+async def _feishu_batch_update_blocks(
+    document_id: str,
+    updates: list,
+    state=None,
+    user_id: str = "",
+) -> ToolResult:
+    """批量更新飞书文档中多个块的内容。updates 为更新数组，每个元素包含 block_id、content 和可选的 block_type。
+    示例: [{"block_id":"xxx","content":"新内容","block_type":"text"}]
+    单次最多更新 200 个块。
+    """
+    if err := _check_config():
+        return err
+    try:
+        if not updates:
+            return ToolResult(success=False, error="updates 数组不能为空")
+        if len(updates) > 200:
+            return ToolResult(success=False, error="单次最多更新 200 个块")
+
+        requests = []
+        for u in updates:
+            if not isinstance(u, dict):
+                continue
+            block_id = u.get("block_id", "")
+            content = u.get("content", "")
+            if not block_id:
+                continue
+            update_req = {"block_id": block_id}
+            if content:
+                elements = [{"text_run": {"content": content}}]
+                update_req["update_text_elements"] = {"elements": elements}
+            requests.append(update_req)
+
+        if not requests:
+            return ToolResult(success=False, error="没有有效的更新请求")
+
+        data = await _request(
+            "PATCH",
+            f"/open-apis/docx/v1/documents/{document_id}/blocks/batch_update",
+            json={"requests": requests},
+        )
+        if data.get("code") != 0:
+            return ToolResult(
+                success=False, error=f"批量更新块失败: {data.get('msg', '')}"
+            )
+        return ToolResult(
+            success=True,
+            content=f"批量更新 {len(requests)} 个块成功",
+            display=f"飞书文档已批量更新 {len(requests)} 个块",
+        )
+    except Exception as e:
+        logger.exception("feishu_batch_update_blocks failed")
+        return ToolResult(success=False, error=str(e))
+
+
+async def _feishu_delete_document_block(
+    document_id: str, block_id: str, state=None, user_id: str = ""
+) -> ToolResult:
+    """删除飞书文档中指定的块。需要提供 block_id（可通过 feishu_get_document_blocks 获取）。
+    注意：删除操作不可撤销。
+    """
+    if err := _check_config():
+        return err
+    try:
+        data = await _request(
+            "DELETE",
+            f"/open-apis/docx/v1/documents/{document_id}/blocks/{block_id}",
+        )
+        if data.get("code") != 0:
+            return ToolResult(
+                success=False, error=f"删除块失败: {data.get('msg', '')}"
+            )
+        return ToolResult(
+            success=True,
+            content=f"块 {block_id} 已删除",
+            display="飞书文档块已删除",
+        )
+    except Exception as e:
+        logger.exception("feishu_delete_document_block failed")
         return ToolResult(success=False, error=str(e))
 
 
@@ -971,21 +1187,117 @@ ToolRegistry.register(
     ToolDef(
         name="feishu_add_document_blocks",
         description=(
-            "向飞书文档添加内容块。blocks 为 JSON 字符串，格式："
-            '[{"block_type":"text","content":"文本"},{"block_type":"heading1","content":"标题"},'
-            '{"block_type":"code","content":"code","language":"python"}]。'
-            "支持的 block_type: text, heading1-9, bullet, ordered, code, quote, todo, divider"
+            "向飞书文档末尾追加内容块。注意：此工具只能追加新内容，不能修改或删除已有内容。"
+            "如需修改已有内容，请用 feishu_update_document_block；如需删除内容，请用 feishu_delete_document_block。"
+            "blocks 为内容块数组，每个元素包含 block_type 和 content。"
+            "支持的 block_type: text, heading1-9, bullet, ordered, code, quote, todo, divider。"
+            "code 块可额外传 language 字段。"
+            "示例: [{\"block_type\":\"text\",\"content\":\"文本\"},{\"block_type\":\"heading1\",\"content\":\"标题\"}]"
         ),
         parameters={
             "document_id": {"type": "string", "description": "文档 ID"},
             "blocks": {
-                "type": "string",
-                "description": '内容块 JSON 数组字符串，如 [{"block_type":"text","content":"Hello"}]',
+                "type": "array",
+                "description": "内容块数组",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "block_type": {
+                            "type": "string",
+                            "description": "块类型: text, heading1-9, bullet, ordered, code, quote, todo, divider",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "块内容文本（divider 类型不需要）",
+                        },
+                        "language": {
+                            "type": "string",
+                            "description": "代码块语言（仅 code 类型需要），如 python, javascript",
+                        },
+                    },
+                    "required": ["block_type", "content"],
+                },
             },
         },
         required=["document_id", "blocks"],
     ),
     _feishu_add_document_blocks,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="feishu_get_document_blocks",
+        description="获取飞书文档的所有块信息，包括 block_id、类型和内容摘要。返回的 block_id 可用于更新或删除块。用于二次编辑文档前获取块结构。",
+        parameters={
+            "document_id": {"type": "string", "description": "文档 ID"},
+            "page_size": {
+                "type": "integer",
+                "description": "每页数量，默认 500（最大 500）",
+                "default": 500,
+            },
+        },
+        required=["document_id"],
+    ),
+    _feishu_get_document_blocks,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="feishu_update_document_block",
+        description="更新飞书文档中指定块的内容。需要先通过 feishu_get_document_blocks 获取 block_id。用于二次编辑文档时修改已有内容。注意：此工具每次只能更新一个块，如需批量更新多个块，请使用 feishu_batch_update_blocks。",
+        parameters={
+            "document_id": {"type": "string", "description": "文档 ID"},
+            "block_id": {"type": "string", "description": "要更新的块 ID"},
+            "block_type": {
+                "type": "string",
+                "description": "块类型: text, heading1-9, bullet, ordered, code, quote, todo, divider",
+            },
+            "content": {"type": "string", "description": "新的块内容文本"},
+            "language": {
+                "type": "string",
+                "description": "代码块语言（仅 code 类型需要）",
+            },
+        },
+        required=["document_id", "block_id"],
+    ),
+    _feishu_update_document_block,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="feishu_batch_update_blocks",
+        description="批量更新飞书文档中多个块的内容。每个更新项需包含 block_id 和 content。用于二次编辑时同时修改多个块。单次最多 200 个块。",
+        parameters={
+            "document_id": {"type": "string", "description": "文档 ID"},
+            "updates": {
+                "type": "array",
+                "description": "更新数组，每项包含 block_id 和 content",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "block_id": {"type": "string", "description": "块 ID"},
+                        "content": {"type": "string", "description": "新的块内容"},
+                    },
+                    "required": ["block_id", "content"],
+                },
+            },
+        },
+        required=["document_id", "updates"],
+    ),
+    _feishu_batch_update_blocks,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="feishu_delete_document_block",
+        description="删除飞书文档中指定的块。当用户要求删除/移除文档中的某段内容时使用此工具。需要先通过 feishu_get_document_blocks 获取目标块的 block_id，然后调用此工具删除。删除操作不可撤销。",
+        parameters={
+            "document_id": {"type": "string", "description": "文档 ID"},
+            "block_id": {"type": "string", "description": "要删除的块 ID"},
+        },
+        required=["document_id", "block_id"],
+    ),
+    _feishu_delete_document_block,
 )
 
 # --- 多维表格类 ---
