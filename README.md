@@ -19,87 +19,87 @@
 
 ## 架构
 
-<div align="center">
+<center>
 
 ```
-┌───────────────────────────────────────────────────┐
-│                   WeChat Client                    │
-│                 (User Interface)                   │
-└───────────────────────┬───────────────────────────┘
-                        │  iLink 协议
-                        ▼
-┌───────────────────────────────────────────────────┐
-│               Communication Layer                  │
-│                                                   │
-│     client · receiver · sender · login · session  │
-│     upload · message                              │
-└───────────────────────┬───────────────────────────┘
-                        │
-                        ▼
-┌───────────────────────────────────────────────────┐
-│                Agent Runtime Core                  │
-│                                                   │
-│     graph → dispatcher → agent_loop → nodes       │
-│                                                   │
-└────────┬──────────────────────────────┬───────────┘
-         │                              │
-         ▼                              ▼
-┌───────────────────┐        ┌──────────────────────┐
-│ Model Abstraction │        │    Infrastructure    │
-│                   │        │                      │
-│ universal         │        │ memory               │
-│ router            │        │ security             │
-│ fallback          │        │ mcp_client           │
-│ streaming         │        │ parsers              │
-└─────────┬─────────┘        └──────────────────────┘
-          │
-          ▼
-┌───────────────────────────────────────────────────┐
-│                   Tool Runtime                     │
-│                                                   │
-│   file · code · system · feishu · web · media     │
-│   aria2 · download · monitor · disk · batch       │
-│                                                   │
-│                     58+ Tools                      │
-└───────────────────────┬───────────────────────────┘
-                        │
-                        ▼
-┌───────────────────────────────────────────────────┐
-│               Local Execution Layer                │
-│                                                   │
-│     File System · Browser · Terminal · Media      │
-└───────────────────────────────────────────────────┘
++---------------------------------------------------+
+|                   WeChat Client                    |
+|                 (User Interface)                   |
++-----------------------+---------------------------+
+                        |  iLink Protocol
+                        v
++---------------------------------------------------+
+|               Communication Layer                  |
+|                                                   |
+|     client . receiver . sender . login . session  |
+|     upload . message                              |
++-----------------------+---------------------------+
+                        |
+                        v
++---------------------------------------------------+
+|                Agent Runtime Core                  |
+|                                                   |
+|     graph --> dispatcher --> agent_loop --> nodes  |
+|                                                   |
++---------+-----------------------------+-----------+
+          |                             |
+          v                             v
++--------------------+       +----------------------+
+|  Model Abstraction |       |    Infrastructure    |
+|                    |       |                      |
+|  universal         |       |  memory              |
+|  router            |       |  security            |
+|  fallback          |       |  mcp_client          |
+|  streaming         |       |  parsers             |
++---------+----------+       +----------------------+
+          |
+          v
++---------------------------------------------------+
+|                    Tool Runtime                    |
+|                                                   |
+|  file . code . system . feishu . web . media      |
+|  aria2 . download . monitor . disk . batch        |
+|                                                   |
+|                     58+ Tools                      |
++-----------------------+---------------------------+
+                        |
+                        v
++---------------------------------------------------+
+|               Local Execution Layer                |
+|                                                   |
+|     File System . Browser . Terminal . Media      |
++---------------------------------------------------+
 ```
 
-</div>
+</center>
 
 ### LangGraph 状态图（默认后端）
 
-<div align="center">
+<center>
 
 ```
-用户消息
-    │
-    ▼
-┌──────────┐
-│ classify │  LLM 识别消息类型
-└──┬──┬──┬──┘
-   │  │  │
-   │  │  └─ interrupt → handle_interrupt ──→ react
-   │  │
-   │  └─ meta → handle_meta ──→ END
-   │
-   ├─ new_task → react ──→ respond ──→ END
-   │              │
-   │              └─ need_confirm ──→ wait_user
-   │                                     │
-   └─ confirm ──────────────────────→ handle_confirm
-                                         ↑       │
-                                         └───────┘
-                                         回到 react
+User Message
+    |
+    v
++----------+
+| classify |  LLM identifies message type
++--+--+--+-+
+   |  |  |
+   |  |  +-- interrupt --> handle_interrupt ----> react
+   |  |
+   |  +-- meta --> handle_meta --> END
+   |
+   +-- new_task --> react ----> respond --> END
+   |                 |
+   |                 +-- need_confirm --> wait_user
+   |                                          |
+   +-- confirm ----------------------> handle_confirm
+                                           ^       |
+                                           +-------+
+                                            loop back
 ```
 
-</div>
+</center>
 
 - **classify**：LLM 判断消息类型（新任务 / 确认回复 / 中断 / 元命令）
 - **react**：LLM 推理 + 工具调用循环（最多 10 轮）
@@ -108,65 +108,65 @@
 
 ### 数据流
 
-<div align="center">
+<center>
 
 ```
-"桌面有什么文件？"
-       │
-       ▼
-  ┌───────────────┐
-  │    WeChat     │  用户发送消息
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │   channel/    │  ① receiver 收消息，3s 防抖去重
-  │   receiver    │  ② 提取文字 + 媒体附件
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │     core/     │  ③ dispatcher 分发消息
-  │  dispatcher   │  ④ 匹配 Skill 触发词 → 注入候选
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │   classify    │  ⑤ LLM 判断消息类型 → new_task
-  │  (LLM 分类)   │
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │     react     │  ⑥ LLM 推理 → 决定调用工具
-  │  (推理循环)   │  ⑦ 生成 tool_call
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │    tools/     │  ⑧ tools/builtin/file.py
-  │    builtin    │     → os.listdir() 执行
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │     react     │  ⑨ 工具结果返回 LLM
-  │  (继续推理)   │  ⑩ 生成自然语言回复
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │  dispatcher   │  ⑪ 智能分段（≤ 600 字/段）
-  │  (分段发送)   │  ⑫ channel/sender → 微信
-  └───────┬───────┘
-          │
-          ▼
-  ┌───────────────┐
-  │    WeChat     │  用户看到回复
-  └───────────────┘
+"What's on my desktop?"
+       |
+       v
+  +---------------+
+  |    WeChat     |  user sends message
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |   channel/    |  (1) receiver gets msg, dedup
+  |   receiver    |  (2) extract text + media
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |     core/     |  (3) dispatcher routes msg
+  |  dispatcher   |  (4) match skill triggers
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |   classify    |  (5) LLM classifies -> new_task
+  |  (intent cls) |
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |     react     |  (6) LLM decides to call tool
+  |  (reasoning)  |  (7) generates tool_call
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |    tools/     |  (8) tools/builtin/file.py
+  |    builtin    |      -> os.listdir() runs
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |     react     |  (9) tool result -> LLM
+  |  (continues)  |  (10) generates reply text
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |  dispatcher   |  (11) split <=600 chars/bubble
+  |  (splitter)   |  (12) channel/sender delivers
+  +-------+-------+
+          |
+          v
+  +---------------+
+  |    WeChat     |  user sees the reply
+  +---------------+
 ```
 
-</div>
+</center>
 
 ***
 
