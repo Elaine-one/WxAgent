@@ -344,14 +344,22 @@ class ToolRegistry:
         cls.register(tool_def, skill_handler, meta)
 
     @classmethod
-    def match_trigger(cls, text: str) -> ToolMeta | None:
+    def match_triggers(cls, text: str) -> list[ToolMeta]:
+        """返回所有匹配的 Skill 元数据列表（去重，每个 skill 至多一次）。"""
         text_lower = text.lower().strip()
+        result = []
+        seen_ids = set()
         for meta in cls._metas.values():
-            if meta.type == ToolType.SKILL and meta.enabled:
-                for trigger in meta.triggers:
-                    if trigger.lower() in text_lower:
-                        return meta
-        return None
+            if meta.type != ToolType.SKILL or not meta.enabled:
+                continue
+            if meta.name in seen_ids:
+                continue
+            for trigger in meta.triggers:
+                if trigger.lower() in text_lower:
+                    result.append(meta)
+                    seen_ids.add(meta.name)
+                    break
+        return result
 
     @classmethod
     def reload(cls, paths: list[str] = None) -> list[ToolMeta]:

@@ -43,3 +43,4 @@ class AgentState(TypedDict):
     voice_transcription: str
     video_urls: list[str]
     video_media_refs: list[dict]
+    candidate_skill_names: list[str]

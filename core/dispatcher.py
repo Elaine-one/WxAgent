@@ -10,6 +10,7 @@ from channel.sender import send_message
 from core.deps import Deps
 from core.state import AgentState
 from llm.streaming import split_for_wechat
+from tools.registry import ToolRegistry
 
 logger = logging.getLogger("wxagent.dispatcher")
 
@@ -102,6 +103,12 @@ class Dispatcher:
         if self.deps:
             self.deps.stream_callback = _stream_callback
 
+        # Skill 触发词匹配（Trigger Recall）
+        candidate_skills = ToolRegistry.match_triggers(msg.text)
+        candidate_skill_names = [m.name for m in candidate_skills] if candidate_skills else []
+        if candidate_skill_names:
+            logger.info("skill_trigger_match", extra={"user_id": uid, "skills": candidate_skill_names, "input": msg.text[:80]})
+
         try:
             snapshot = self.graph.get_state(configurable)
         except Exception:
@@ -113,6 +120,7 @@ class Dispatcher:
                 state_update = {
                     "user_input": msg.text,
                     "confirmation_response": msg.text,
+                    "candidate_skill_names": candidate_skill_names,
                 }
                 self.graph.update_state(configurable, state_update, as_node="wait_user")
                 logger.info("interrupt_resume", extra={"user_id": uid, "user_input": msg.text[:80]})
@@ -122,6 +130,7 @@ class Dispatcher:
                 state["user_input"] = msg.text
                 state["msg_type"] = msg.msg_type
                 state.update(media_state)
+                state["candidate_skill_names"] = candidate_skill_names
                 result = self._run_async(self.graph.ainvoke(state, configurable))
         else:
             state = self._get_or_create_state(uid)
@@ -131,6 +140,7 @@ class Dispatcher:
             state["msg_type"] = msg.msg_type
             state.update(media_state)
             state["interrupted"] = bool(state.get("messages") and len(state.get("messages", [])) > 1 and not state.get("task_complete"))
+            state["candidate_skill_names"] = candidate_skill_names
             logger.info("new_invocation", extra={"user_id": uid, "user_input": msg.text[:80]})
             result = self._run_async(self.graph.ainvoke(state, configurable))
 
@@ -272,4 +282,5 @@ class Dispatcher:
             "voice_transcription": "",
             "video_urls": [],
             "video_media_refs": [],
+            "candidate_skill_names": [],
         }

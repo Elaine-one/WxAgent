@@ -92,6 +92,51 @@ def _fix_orphaned_tool_calls(conv: list) -> list:
     return conv
 
 
+def _inject_skill_tools(model, candidate_skill_names: list[str]):
+    """将候选 Skill 动态注入模型工具列表，返回 restore 函数。
+
+    在 LLM 调用前注入，确保 LLM 可见候选 skill；调用后恢复，避免跨用户污染。
+    """
+    candidate_skill_names = candidate_skill_names or []
+    if not candidate_skill_names:
+        return lambda: None
+
+    skill_defs = []
+    for name in candidate_skill_names:
+        td, _ = ToolRegistry._tools.get(f"skill_{name}", (None, None))
+        if td:
+            skill_defs.append(td)
+
+    if not skill_defs:
+        return lambda: None
+
+    from llm.fallback import LLMFallback
+    if isinstance(model, LLMFallback):
+        unwrapped = [model.primary, model.fallback]
+    else:
+        unwrapped = [model]
+
+    from tools.base import to_openai_schema, to_anthropic_schema
+    from llm.format_anthropic import AnthropicFormat
+
+    original_schemas = []
+    for m in unwrapped:
+        original_schemas.append(m._tool_schemas)
+        if isinstance(m._fmt, AnthropicFormat):
+            skill_schemas = to_anthropic_schema(skill_defs)
+        else:
+            skill_schemas = to_openai_schema(skill_defs)
+        m.update_tools(m._tool_schemas + skill_schemas)
+
+    logger.info("skill_injected", extra={"skills": candidate_skill_names, "added": len(skill_defs)})
+
+    def restore():
+        for m, orig in zip(unwrapped, original_schemas):
+            m.update_tools(orig)
+
+    return restore
+
+
 async def react_node(state: AgentState, config) -> AgentState:
     deps = get_deps(config)
     model = deps.model
@@ -272,6 +317,19 @@ async def react_node(state: AgentState, config) -> AgentState:
         logger.info("react_resuming", extra=_log(conv_len=len(conv)))
         user_input = state.get("user_input", "")
 
+    # 候选 Skill 注入：只把 trigger 命中的 skill 注册给本次 LLM 调用
+    candidate_skill_names = state.get("candidate_skill_names", [])
+    restore_tools = _inject_skill_tools(model, candidate_skill_names)
+    if candidate_skill_names:
+        skill_hint_parts = ["匹配到以下技能："]
+        for name in candidate_skill_names:
+            td, _ = ToolRegistry._tools.get(f"skill_{name}", (None, None))
+            if td:
+                skill_hint_parts.append(f"- {name}: {td.description}")
+        skill_hint_parts.append("如果用户希望执行该技能，请调用对应的 skill_ 工具。")
+        conv.append({"role": "system", "content": "\n".join(skill_hint_parts)})
+        logger.info("react_skill_hint", extra=_log(skills=candidate_skill_names))
+
     logger.info("react_start", extra=_log(conv_len=len(conv), is_resuming=is_resuming, user_input=state.get("user_input", "")[:80]))
 
     for _round in range(cfg.MAX_TOOL_ROUNDS):
@@ -382,6 +440,7 @@ async def react_node(state: AgentState, config) -> AgentState:
                 state["pending_confirmation"] = detail
                 state["messages"] = _ensure_content(conv)
                 logger.info("react_needs_confirm", extra=_log(tool=tc.name, tool_call_id=tc.id, tool_args=str(tc.args)[:200]))
+                restore_tools()
                 return state
 
             result_text = result.content if result.success else f"错误：{result.error or '未知错误'}"
@@ -418,6 +477,7 @@ async def react_node(state: AgentState, config) -> AgentState:
             pass
 
     logger.info("react_done", extra=_log(task_complete=state.get("task_complete"), response_len=len(state.get("final_response", ""))))
+    restore_tools()
     return state
 
 
