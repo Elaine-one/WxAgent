@@ -268,6 +268,7 @@ class ServiceStatus(BaseModel):
     running: bool = False
     pid: Optional[int] = None
     uptime: Optional[float] = None
+    ready: bool = False
 
 
 class TestLLMRequest(BaseModel):

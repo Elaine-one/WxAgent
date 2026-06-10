@@ -17,13 +17,34 @@ from core.agent_loop import agent_loop, do_login, interruptible_sleep
 from observability.logger import get_logger
 
 
+READY_SIGNAL_FILE = config.DATA_DIR / "ready_signal"
+
+
+def _write_ready_signal():
+    """Agent 初始化完成，写入就绪信号文件。"""
+    try:
+        READY_SIGNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        READY_SIGNAL_FILE.write_text(str(time.time()), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _clear_ready_signal():
+    """清理就绪信号文件。"""
+    try:
+        if READY_SIGNAL_FILE.exists():
+            READY_SIGNAL_FILE.unlink()
+    except Exception:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="离线模式，不连接微信")
     args = parser.parse_args()
 
-    signal.signal(signal.SIGINT, lambda *_: setattr(config, "running", False))
-    signal.signal(signal.SIGTERM, lambda *_: setattr(config, "running", False))
+    signal.signal(signal.SIGINT, lambda *_: (setattr(config, "running", False), _clear_ready_signal()))
+    signal.signal(signal.SIGTERM, lambda *_: (setattr(config, "running", False), _clear_ready_signal()))
 
     if not config.LLM_API_KEY:
         print("错误：请在 .env 中设置 LLM_API_KEY")
@@ -57,7 +78,9 @@ def main():
     use_langgraph, dispatcher, conversations = _init_agent_backend(model, phase3_ctx)
 
     if args.dry_run:
+        _write_ready_signal()
         _dry_run_loop(model, use_langgraph, dispatcher, conversations, phase3_ctx)
+        _clear_ready_signal()
         return
 
     state = channel.load_session(str(config.SESSION_FILE))
@@ -68,7 +91,9 @@ def main():
     if use_langgraph and dispatcher:
         dispatcher.session = state
 
+    _write_ready_signal()
     _message_loop(state, model, use_langgraph, dispatcher, conversations, phase3_ctx)
+    _clear_ready_signal()
     print("\n已退出")
 
 
@@ -116,6 +141,7 @@ def _message_loop(state, model, use_langgraph: bool, dispatcher, conversations: 
                 pass
             print("\n收到关闭信号，正在退出...")
             config.running = False
+            _clear_ready_signal()
             break
 
         # 获取消息
