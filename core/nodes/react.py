@@ -297,8 +297,11 @@ async def react_node(state: AgentState, config) -> AgentState:
                     if len(_buffer) >= cfg.ADV_MAX_CHARS:
                         _should_send = True
                     elif len(_buffer) > 60:  # 至少累积 60 字符再检查断句
-                        # 检查是否以标点结尾
-                        if _buffer.rstrip()[-1:] in "。！？\n；：":
+                        # 段落完成（\n\n）→ 发送，这是一条消息的自然边界
+                        if _buffer.endswith("\n\n"):
+                            _should_send = True
+                        # 句末标点 + 缓冲区较长 → 发送
+                        elif len(_buffer) > cfg.ADV_MAX_CHARS * 0.5 and _buffer.rstrip()[-1:] in "。！？；：":
                             _should_send = True
                     if _should_send:
                         try:

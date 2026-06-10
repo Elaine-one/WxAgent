@@ -95,7 +95,7 @@ PYTHON_MAX_OUTPUT = int(os.getenv("PYTHON_MAX_OUTPUT", _LIMITS.get("python_max_o
 SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", _LIMITS.get("shell_timeout_seconds", 30)))
 
 ADV_MAX_TOKENS = int(os.getenv("ADV_MAX_TOKENS", _ADVANCED.get("max_tokens", 2048)))
-ADV_MAX_CHARS = int(os.getenv("ADV_MAX_CHARS", _ADVANCED.get("max_chars", 480)))
+ADV_MAX_CHARS = int(os.getenv("ADV_MAX_CHARS", _ADVANCED.get("max_chars", 600)))
 ADV_DEBOUNCE_DELAY = float(os.getenv("ADV_DEBOUNCE_DELAY", _ADVANCED.get("debounce_delay", 3.0)))
 ADV_MAX_SESSIONS = int(os.getenv("ADV_MAX_SESSIONS", _ADVANCED.get("max_sessions", 100)))
 ADV_SESSION_TTL_SECONDS = int(os.getenv("ADV_SESSION_TTL_SECONDS", _ADVANCED.get("session_ttl_seconds", 86400)))
@@ -301,6 +301,10 @@ _TOOL_PROMPT_DETAILS = {
     "feishu_create_document": ("飞书", "创建飞书文档。当用户说'帮我创建一个飞书文档'/'在飞书写个文档'时使用。创建成功后必须将文档链接返回给用户"),
     "feishu_add_document_blocks": ("飞书", "向飞书文档添加内容。当用户说'往文档里写点内容'/'在文档中添加标题和正文'时使用"),
     "feishu_get_document": ("飞书", "获取飞书文档内容。当用户说'看看这个飞书文档'/'读取飞书文档内容'时使用"),
+    "feishu_get_document_blocks": ("飞书", "获取飞书文档块列表。当需要编辑/修改已有文档时，先调用此工具获取 block_id，再调用更新或删除工具"),
+    "feishu_update_document_block": ("飞书", "更新飞书文档中指定块的内容。当用户说'修改文档中的某段'/'编辑文档内容'时使用，需先通过 feishu_get_document_blocks 获取 block_id"),
+    "feishu_batch_update_blocks": ("飞书", "批量更新飞书文档多个块的内容。当需要同时修改文档中多处内容时使用"),
+    "feishu_delete_document_block": ("飞书", "删除飞书文档中指定的块。当用户说'删掉文档中的某段'/'去掉这个标题'时使用"),
     "feishu_create_bitable": ("飞书", "创建飞书多维表格。当用户说'帮我创建一个多维表格'/'在飞书建个表'时使用。创建成功后必须将表格链接返回给用户"),
     "feishu_create_bitable_table": ("飞书", "在多维表格中创建数据表。当用户说'在表格里加个数据表'时使用"),
     "feishu_add_bitable_field": ("飞书", "向多维表格添加字段。当用户说'给表格加一列'/'添加字段'时使用"),
@@ -339,6 +343,15 @@ _TOOL_RULES = f"""
 - 单条消息控制在 1500 字以内
 - 绝对不要执行危险命令（删除、格式化、修改系统设置等）
 
+## 回复格式要求（微信友好）
+- 标题用 ■ 符号，如：■ 市场表现（二级标题用 ■■）
+- 强调用【】符号，如：【重要】
+- 列表用 • 符号，如：• 第一项
+- 行内代码用「」符号，如：「hello」
+- 引用用 ┃ 符号，如：┃ 名言
+- 不要使用 Markdown 的 ##、**、- 等语法（微信不渲染）
+- 每个逻辑段落之间用空行分隔，便于分段发送
+
 ## 文件存储规则
 - 所有文件操作默认在工作区 {WORKSPACE_DIR} 内完成
 - 生成文档、图表 → {WORKSPACE_DIR / "output"}
@@ -374,6 +387,23 @@ def _build_tool_section() -> str:
             "当你需要执行操作时，先用 tool_search 搜索相关工具，",
             "再用 tool_describe 查看参数格式，最后用 tool_call 执行。",
             "不要猜测工具名或参数格式，务必先搜索和查看。",
+            "",
+            "## 工具概览",
+            "你可以使用以下类别的工具（通过 tool_search 搜索具体工具名）：",
+            "- 文件操作：读写文件、发送文件、批量重命名、整理文件",
+            "- 代码执行：运行 Python 代码、安装包",
+            "- 系统控制：执行命令、打开应用、音量/锁屏、进程管理",
+            "- 网络访问：抓取网页(web_fetch)、下载文件/视频、Aria2 高速下载",
+            "- 媒体处理：OCR 识别、音频转录、视频字幕",
+            "- 磁盘管理：扫描大文件、查重复、磁盘统计",
+            "- 定时监控：定时任务、URL 监控",
+            "- 飞书：文档、表格、云盘、消息、日历",
+            "- 地图服务：百度地图、高德地图（地理编码、路线规划、天气查询）",
+            "",
+            "## 搜索策略",
+            "- tool_search 按关键词匹配工具描述，使用操作类关键词效果最好（如「读取文件」「抓取网页」）",
+            "- 如果搜索结果与意图不匹配，尝试：换用通用操作词、或直接搜索工具名",
+            "- 常用工具可直接搜索：web_fetch（抓取网页）、run_python（执行代码）、read_file（读文件）",
             "",
             "## 飞书操作注意",
             "- 使用飞书创建文档、表格、文件夹等操作后，必须将工具返回的链接转达给用户",

@@ -7,7 +7,9 @@ from tools.base import to_openai_schema, to_anthropic_schema
 
 
 def create_llm(provider: str, api_key: str, base_url: str,
-               model: str, tools: list) -> BaseLLM:
+               model: str, tools: list = None) -> BaseLLM:
+    if tools is None:
+        tools = []
     if provider == "anthropic":
         fmt = AnthropicFormat()
         tool_schemas = to_anthropic_schema(tools)
