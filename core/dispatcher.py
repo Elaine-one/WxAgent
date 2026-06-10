@@ -214,6 +214,17 @@ class Dispatcher:
                 f"影响目标:\n{target_str}\n\n"
                 f"确认执行请回复 Y，取消回复 N"
             )
+        elif confirm_type == "delete_file":
+            path = detail.get("path", "")
+            size = detail.get("size", 0)
+            size_str = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} B"
+            return (
+                f"⚠ 即将删除文件\n"
+                f"路径: {path}\n"
+                f"大小: {size_str}\n"
+                f"此操作不可恢复！\n\n"
+                f"确认删除请回复 Y，取消回复 N"
+            )
         elif confirm_type == "cloud_consent":
             return f"☁ {detail.get('message', '此操作会将数据发送到云端服务，是否继续？')}\n确认请回复 Y，取消回复 N"
         elif confirm_type == "pip_install":

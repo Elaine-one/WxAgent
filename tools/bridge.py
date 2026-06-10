@@ -60,6 +60,14 @@ def _tool_search(query: str, top_k: int = 5, state=None, user_id: str = "") -> T
         lines.append(f"{i}. **{r['name']}** (类型: {r['type']}, 相关度: {r['score']})")
         lines.append(f"   {r['description']}")
     lines.append("\n使用 tool_describe 查看工具的完整参数格式，使用 tool_call 执行工具。")
+    # 低相关度时追加搜索策略提示
+    max_score = max(r["score"] for r in results)
+    if max_score < 5.0:
+        lines.append(
+            "\n⚠️ 搜索结果相关度较低，建议：\n"
+            "- 换用更通用的操作类关键词（如「网页」「文件」「消息」而非具体领域词）\n"
+            "- 或直接搜索工具名（如 web_fetch、read_file）"
+        )
     return ToolResult(success=True, content="\n".join(lines))
 
 
@@ -152,6 +160,62 @@ TOOL_CALL_META = ToolMeta(
 )
 
 
+def _coerce_arguments(tool_name: str, arguments: dict) -> dict:
+    """根据目标工具的 schema 校正参数类型。
+
+    LLM 通过 tool_call 桥接调用工具时，可能将 array/object 类型的参数
+    序列化为字符串传入（因为 tool_call 的 arguments 参数类型是 object，
+    LLM 无法区分嵌套结构）。此函数根据目标工具的 schema 自动反序列化。
+
+    例如：{"blocks": "[{...}]"} → {"blocks": [{...}]}
+    """
+    tool_def, _ = ToolRegistry._tools.get(tool_name, (None, None))
+    if not tool_def or not tool_def.parameters:
+        return arguments
+
+    coerced = dict(arguments)
+    for param_name, param_schema in tool_def.parameters.items():
+        if param_name not in coerced:
+            continue
+        value = coerced[param_name]
+        expected_type = param_schema.get("type", "")
+
+        # 字符串 → array/object：当 schema 期望 array/object 但 LLM 传了字符串
+        if isinstance(value, str) and expected_type in ("array", "object"):
+            try:
+                parsed = json.loads(value)
+                if expected_type == "array" and isinstance(parsed, list):
+                    coerced[param_name] = parsed
+                    logger.debug("bridge coerced '%s' from string to array", param_name)
+                elif expected_type == "object" and isinstance(parsed, dict):
+                    coerced[param_name] = parsed
+                    logger.debug("bridge coerced '%s' from string to object", param_name)
+            except (json.JSONDecodeError, ValueError):
+                pass  # 解析失败，保留原值让目标工具自行处理
+
+        # 字符串 → number/integer
+        elif isinstance(value, str) and expected_type in ("number", "integer"):
+            try:
+                if expected_type == "integer":
+                    coerced[param_name] = int(value)
+                else:
+                    coerced[param_name] = float(value)
+                logger.debug("bridge coerced '%s' from string to %s", param_name, expected_type)
+            except (ValueError, TypeError):
+                pass
+
+        # 字符串 → boolean
+        elif isinstance(value, str) and expected_type == "boolean":
+            if value.lower() in ("true", "1", "yes"):
+                coerced[param_name] = True
+                logger.debug("bridge coerced '%s' from string to boolean", param_name)
+            elif value.lower() in ("false", "0", "no"):
+                coerced[param_name] = False
+                logger.debug("bridge coerced '%s' from string to boolean", param_name)
+
+    return coerced
+
+
 async def _tool_call(tool_name: str, arguments: dict, state=None, user_id: str = "") -> ToolResult:
     # 防止递归调用桥接工具
     if tool_name in ("tool_search", "tool_describe", "tool_call"):
@@ -171,6 +235,11 @@ async def _tool_call(tool_name: str, arguments: dict, state=None, user_id: str =
     meta = ToolRegistry.get_meta(tool_name)
     if meta and not meta.enabled:
         return ToolResult(success=False, error=f"工具 '{tool_name}' 已禁用。")
+
+    # 根据目标工具 schema 校正参数类型
+    # LLM 可能将 array/object 类型的参数序列化为字符串传入，
+    # 例如 {"blocks": "[{...}]"} 而非 {"blocks": [{...}]}
+    arguments = _coerce_arguments(tool_name, arguments)
 
     # 执行真实工具
     logger.info(f"bridge tool_call → {tool_name}({json.dumps(arguments, ensure_ascii=False)[:200]})")

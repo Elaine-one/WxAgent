@@ -13,6 +13,10 @@
 
 ***
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/0d06f494-1566-408b-b739-0ddc13b0dbc8" controls width="80%"></video>
+</p>
+
 ## 架构
 
 ```
@@ -30,7 +34,7 @@
                           │  universal · router · fallback · streaming      │
                           │  format_openai · format_anthropic               │
                           ├──────────────────────────────────────────────────┤
-                          │  tools/  工具层 (53 工具)                        │
+                          │  tools/  工具层 (55 工具)                        │
                           │  registry · base · bridge · search              │
                           │  builtin/  file · code · system · system_control│
                           │  web · download · media · disk · batch          │
@@ -113,7 +117,7 @@
 | ------ | ---------------------------------------------------------- |
 | 💬 对话  | 多轮自然语言对话，DeepSeek V4 思考模式，流式输出，长消息智能分段（480字+中文标点）          |
 | 📁 文件  | 收发图片/视频/文档，CDN AES-128-ECB 加密传输；PDF/Word/Excel/图片解析        |
-| 🔧 工具  | 53 工具（50 内置 + 3 桥接），覆盖文件/代码/系统/网络/下载/媒体/磁盘/批量/监控/飞书 11 大类                   |
+| 🔧 工具  | 55 工具（52 内置 + 3 桥接），覆盖文件/代码/系统/网络/下载/媒体/磁盘/批量/监控/飞书 11 大类                   |
 | 🧠 记忆  | 短期对话压缩 + 长期 ChromaDB 向量记忆 + 偏好自动学习 + 混合检索                  |
 | 🔒 安全  | 路径沙箱 + 命令风险分级 + AI 安全审查 + 审计日志 + 数据出境同意 + 剪贴板脱敏（6 层防护）                      |
 | ⏰ 调度   | APScheduler 定时任务 + URL 变化监控 + Skill 场景模式（可预定义触发词+动作）               |
@@ -125,13 +129,13 @@
 | 📊 追踪  | LLM 调用次数、Token 消耗、USD 费用估算；元命令 /help /status /usage        |
 | 🖥️ 面板 | Web 管理面板（FastAPI + React），13 个配置页面、服务启停、日志查看、工具管理、Skill 生成 |
 | 🔌 MCP  | MCP 客户端/服务端双模式，动态加载外部工具服务器，Tool Search 桥接机制 |
-| 🕊 飞书  | 19 个飞书内置工具，消息/文档/多维表格/云空间/日历/权限全覆盖，微信↔飞书跨域协同 |
+| 🕊 飞书  | 23 个飞书内置工具，消息/文档/文档块/多维表格/云空间/日历/权限/文件管理全覆盖，微信↔飞书跨域协同 |
 
-### 工具清单（53）
+### 工具清单（55）
 
 | 分类    | 工具                                                                      | 说明                                    |
 | ----- | ----------------------------------------------------------------------- | ------------------------------------- |
-| 文件操作  | `read_file` `write_file` `list_directory` `search_files` `send_file`    | 读写浏览搜索发送，写操作限制在 workspace             |
+| 文件操作  | `read_file` `write_file` `delete_file` `list_directory` `search_files` `send_file`    | 读写删除浏览搜索发送，写操作限制在 workspace             |
 | 代码执行  | `run_python` `install_package`                                          | workspace venv 隔离执行，AST 级安全检查         |
 | 系统工具  | `run_shell` `clipboard_read` `get_active_window`                        | Shell 三级风险分类，剪贴板自动脱敏                  |
 | 系统控制  | `system_action` `open_app` `list_processes` `check_port` `kill_process` | 音量/锁屏/休眠，应用白名单，进程管理                   |
@@ -142,7 +146,7 @@
 | 媒体处理  | `transcribe_audio` `video_add_subtitles` `ocr_image`                    | Whisper 转录，字幕压制，PaddleOCR/云端 OCR      |
 | 磁盘管理  | `scan_large_files` `find_duplicates` `disk_usage`                       | 大文件扫描，MD5 去重，空间统计                     |
 | 定时监控  | `schedule_task` `monitor_url`                                           | Cron 定时任务，URL 变化监控                    |
-| 飞书集成  | `feishu_send_message` `feishu_send_group_message` `feishu_create_document` `feishu_get_document` `feishu_add_document_blocks` `feishu_create_bitable` `feishu_list_bitable_tables` `feishu_create_bitable_table` `feishu_list_bitable` `feishu_add_bitable_records` `feishu_add_bitable_field` `feishu_create_folder` `feishu_list_folder` `feishu_upload_file` `feishu_list_calendar` `feishu_add_permission` `feishu_delete_file` `feishu_copy_file` `feishu_move_file` | 消息/文档/多维表格/云空间/日历/权限，微信↔飞书跨域 |
+| 飞书集成  | `feishu_send_message` `feishu_send_group_message` `feishu_create_document` `feishu_get_document` `feishu_add_document_blocks` `feishu_get_document_blocks` `feishu_update_document_block` `feishu_batch_update_blocks` `feishu_delete_document_block` `feishu_create_bitable` `feishu_list_bitable_tables` `feishu_create_bitable_table` `feishu_list_bitable` `feishu_add_bitable_records` `feishu_add_bitable_field` `feishu_create_folder` `feishu_list_folder` `feishu_upload_file` `feishu_list_calendar` `feishu_add_permission` `feishu_delete_file` `feishu_copy_file` `feishu_move_file` | 消息/文档/文档块/多维表格/云空间/日历/权限，微信↔飞书跨域 |
 | 桥接工具  | `tool_search` `tool_describe` `tool_call`                               | 按需搜索/描述/调用工具，Tool Search 机制           |
 | MCP    | 动态加载 `mcp_{server}_{tool}`                                              | MCP 服务器工具，运行时动态注册                     |
 
@@ -255,6 +259,8 @@ python web/run_web.py
 | `PYTHON_TIMEOUT`        | <br /> | 60                            | Python 执行超时（秒）                            |
 | `SHELL_TIMEOUT`         | <br /> | 30                            | Shell 命令超时（秒）                             |
 | `ADV_*`                 | <br /> | 见 `.env.example`              | 30+ 个高级配置覆盖（超时、模型、线程池等），详见 `.env.example` |
+| `BAIDU_MAPS_API_KEY`    | <br /> | —                             | 百度地图 API Key（MCP 地图工具）                  |
+| `AMAP_MAPS_API_KEY`     | <br /> | —                             | 高德地图 API Key（MCP 地图工具）                  |
 
 ### config.yaml
 
@@ -327,7 +333,7 @@ WxAgent/
 │   ├── streaming.py         #   流式输出 + 长消息智能分段
 │   └── base.py              #   LLM 基础接口
 │
-├── tools/                   # 工具层（53 工具）
+├── tools/                   # 工具层（55 工具）
 │   ├── base.py              #   ToolDef / ToolResult 数据类 + Schema 转换
 │   ├── registry.py          #   ToolRegistry 注册表（register + execute）
 │   ├── bridge.py            #   桥接工具（tool_search / tool_describe / tool_call）
@@ -388,7 +394,7 @@ WxAgent/
 │   └── api/                 #   FastAPI 后端
 │       ├── app.py           #     应用实例 + CORS + SPA 托管
 │       ├── models/
-│       │   └── schemas.py   #     25 个 Pydantic 配置模型
+│       │   └── schemas.py   #     33 个 Pydantic 配置模型
 │       ├── routes/
 │       │   ├── config.py    #     配置 CRUD + LLM 连接测试
 │       │   ├── service.py   #     服务启停管理

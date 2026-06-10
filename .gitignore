@@ -51,6 +51,9 @@ web/frontend/node_modules/
 Thumbs.db
 desktop.ini
 
+# 动态生成的 Skill 文件
+tools/skills/
+
 # 临时文件
 *.tmp
 *.log

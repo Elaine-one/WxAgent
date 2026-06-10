@@ -42,6 +42,8 @@ class MCPClient:
             self._start_stdio()
         elif transport == "sse":
             await self._start_sse()
+        elif transport == "feishu_mcp":
+            await self._start_feishu_mcp()
         else:
             raise ValueError(f"Unknown transport: {transport}")
 
@@ -80,6 +82,16 @@ class MCPClient:
         await self._transport.start()
         logger.info("MCPClient '%s' connected via SSE", self.name)
 
+    async def _start_feishu_mcp(self):
+        from mcp_client.transport import FeishuMCPTransport
+        self._transport = FeishuMCPTransport(
+            app_id=self.config.get("app_id", ""),
+            app_secret=self.config.get("app_secret", ""),
+            allowed_tools=self.config.get("allowed_tools", []),
+        )
+        await self._transport.start()
+        logger.info("MCPClient '%s' connected via Feishu MCP", self.name)
+
     def _drain_stderr(self):
         """后台线程持续读取 stderr，防止管道阻塞。"""
         while self._proc and self._proc.stderr:
@@ -111,9 +123,13 @@ class MCPClient:
                 return None
             return await asyncio.to_thread(self._send_stdio, message)
         if self._transport is not None:
-            await self._transport.send(message)
-            if is_notification:
+            result = await self._transport.send(message)
+            if is_notification or result is None:
                 return None
+            # 飞书 MCP Transport 的 send() 直接返回响应 dict
+            if isinstance(result, dict) and ("jsonrpc" in result or "result" in result or "error" in result):
+                return result
+            # SSE Transport 需要单独 receive
             return await self._transport.receive()
         raise RuntimeError("MCP client not connected")
 

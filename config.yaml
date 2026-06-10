@@ -256,7 +256,7 @@ system_control:
     explorer: explorer
 advanced:
   max_tokens: 2048
-  max_chars: 480
+  max_chars: 600
   debounce_delay: 3.0
   max_sessions: 100
   session_ttl_seconds: 86400
@@ -366,6 +366,20 @@ mcp:
       - amap_mcp_server
       env_from_dotenv:
       - AMAP_MAPS_API_KEY
+    feishu-official:
+      transport: feishu_mcp
+      app_id_env: FEISHU_APP_ID
+      app_secret_env: FEISHU_APP_SECRET
+      allowed_tools:
+      - search-doc
+      - fetch-doc
+      - update-doc
+      - list-docs
+      - get-comments
+      - add-comments
+      - search-user
+      - get-user
+      - fetch-file
 tool_search:
   enabled: true
   always_load: []

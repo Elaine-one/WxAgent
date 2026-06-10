@@ -10,7 +10,7 @@ from web.api.routes.mcp import router as mcp_router
 from web.api.routes.feishu import router as feishu_router
 from observability.logger import get_logger
 
-app = FastAPI(title="WeChat-Claude Management Panel", version="1.0.0")
+app = FastAPI(title="WxAgent Management Panel", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,

@@ -169,13 +169,23 @@ class ToolRegistry:
             return list(cls._metas.values())
 
         if paths is None:
-            paths = ["tools/builtin", "tools/skills"]
+            # 使用绝对路径，基于 config.PROJECT_ROOT，避免依赖 CWD
+            try:
+                from config import PROJECT_ROOT
+                paths = [
+                    str(PROJECT_ROOT / "tools" / "builtin"),
+                    str(PROJECT_ROOT / "tools" / "skills"),
+                ]
+            except Exception:
+                # 兜底：使用相对路径（仅当从项目根启动时有效）
+                paths = ["tools/builtin", "tools/skills"]
 
         discovered = []
+        missing_paths = []
         for path_str in paths:
             path = Path(path_str)
             if not path.exists():
-                logger.debug(f"Discovery path not found: {path}")
+                missing_paths.append(str(path))
                 continue
 
             if "builtin" in path_str:
@@ -183,7 +193,14 @@ class ToolRegistry:
             elif "skills" in path_str:
                 discovered.extend(cls._discover_skills(path))
 
-        cls._discovered = True
+        # 只有当所有指定路径都不存在时才不标记为 discovered，允许后续重试
+        if not missing_paths:
+            cls._discovered = True
+        else:
+            logger.warning(
+                f"Discovery skipped missing paths: {missing_paths}. "
+                f"Will retry on next discover() call."
+            )
         logger.info(f"Discovered {len(discovered)} tools")
         return discovered
 

@@ -203,6 +203,15 @@ def handle_confirm_node(state: AgentState, config) -> AgentState:
         state["messages"] = [{"role": "tool", "content": result_text, "tool_call_id": tool_call_id}]
         logger.info("dangerous_command_confirmed", extra={"user_id": state.get("user_id", ""), "command": command[:200], "success": result.success})
 
+    elif confirm_type == "delete_file":
+        from tools.builtin.file import _do_delete_file
+        path = pending.get("path", "")
+        result = _do_delete_file(path)
+        state["last_error"] = "" if result.success else result.error
+        result_text = result.content[:4000] if result.success else f"错误：{result.error or '删除失败'}"
+        state["messages"] = [{"role": "tool", "content": result_text, "tool_call_id": tool_call_id}]
+        logger.info("delete_file_confirmed", extra={"user_id": state.get("user_id", ""), "path": path, "success": result.success})
+
     elif confirm_type == "pip_install":
         package_name = pending.get("package_name", "")
         try:

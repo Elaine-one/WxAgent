@@ -63,7 +63,7 @@ export default function Layout() {
           whiteSpace: 'nowrap',
           overflow: 'hidden',
         }}>
-          {collapsed ? 'WC' : 'WeChat Claude'}
+          {collapsed ? 'Wx' : 'WxAgent'}
         </div>
         <Menu
           theme="dark"

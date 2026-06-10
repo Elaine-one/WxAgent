@@ -1,4 +1,5 @@
 import subprocess
+import threading
 import time
 import locale
 from pathlib import Path
@@ -12,6 +13,7 @@ router = APIRouter(prefix="/api", tags=["service"])
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 MAIN_PY = PROJECT_ROOT / "main.py"
 SHUTDOWN_SIGNAL_FILE = PROJECT_ROOT / "workspace" / "data" / "shutdown_signal"
+READY_SIGNAL_FILE = PROJECT_ROOT / "workspace" / "data" / "ready_signal"
 
 _process: subprocess.Popen | None = None
 _start_time: float | None = None
@@ -114,15 +116,17 @@ def _request_graceful_stop(timeout: int = 10) -> bool:
 def get_status():
     global _process, _start_time
 
+    ready = READY_SIGNAL_FILE.exists()
+
     if _process is not None and _process.poll() is None:
         uptime = time.time() - _start_time if _start_time else None
-        return ServiceStatus(running=True, pid=_process.pid, uptime=uptime)
+        return ServiceStatus(running=True, pid=_process.pid, uptime=uptime, ready=ready)
 
     pid = _find_main_process()
     if pid is not None:
-        return ServiceStatus(running=True, pid=pid, uptime=None)
+        return ServiceStatus(running=True, pid=pid, uptime=None, ready=ready)
 
-    return ServiceStatus(running=False, pid=None, uptime=None)
+    return ServiceStatus(running=False, pid=None, uptime=None, ready=False)
 
 
 @router.post("/service/start")
@@ -137,16 +141,49 @@ def start_service():
         raise HTTPException(status_code=409, detail="Service is already running (external process)")
 
     try:
+        # 清理旧的信号文件，防止新进程误读
+        for signal_file in [READY_SIGNAL_FILE, SHUTDOWN_SIGNAL_FILE]:
+            if signal_file.exists():
+                try:
+                    signal_file.unlink()
+                except Exception:
+                    pass
+
+        log_dir = PROJECT_ROOT / "workspace" / "data" / "debug"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stderr_path = log_dir / "agent_stderr.log"
+        stdout_log = open(log_dir / "agent_stdout.log", "a", encoding="utf-8")
+        stderr_log = open(stderr_path, "a", encoding="utf-8")
+
         _process = subprocess.Popen(
             ["python", str(MAIN_PY)],
             cwd=str(PROJECT_ROOT),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=stdout_log,
+            stderr=stderr_log,
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-            encoding=_SYSTEM_ENCODING, errors="replace",
         )
         _start_time = time.time()
+
+        # 等待2秒检测进程是否立即崩溃
+        time.sleep(2)
+        if _process.poll() is not None:
+            exit_code = _process.poll()
+            _process = None
+            _start_time = None
+            # 读取 stderr 尾部作为错误信息
+            error_detail = f"进程启动后立即退出 (exit code: {exit_code})"
+            try:
+                stderr_text = stderr_path.read_text(encoding="utf-8", errors="replace")
+                if stderr_text.strip():
+                    # 取最后500字符
+                    error_detail += "\n" + stderr_text.strip()[-500:]
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=error_detail)
+
         return {"status": "started", "pid": _process.pid}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -175,6 +212,12 @@ def stop_service():
         finally:
             _process = None
             _start_time = None
+            # 清理就绪信号
+            if READY_SIGNAL_FILE.exists():
+                try:
+                    READY_SIGNAL_FILE.unlink()
+                except Exception:
+                    pass
         return {"status": "stopped"}
 
     # 没有 Popen 对象（外部进程或上次 Web 面板遗留的进程）

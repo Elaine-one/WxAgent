@@ -9,6 +9,7 @@ import {
   ApiOutlined,
   ThunderboltOutlined,
   TeamOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import { useServiceStore } from '../store/serviceStore'
 import { useConfigStore } from '../store/configStore'
@@ -286,13 +287,14 @@ function LogEntry({ entry }: { entry: any }) {
 }
 
 export default function Dashboard() {
-  const { status, loading, fetchStatus, start, stop, restart } = useServiceStore()
+  const { status, loading, startError, fetchStatus, start, stop, restart } = useServiceStore()
   const { config, fetchConfig, updateConfig } = useConfigStore()
   const [stats, setStats] = useState<any>(null)
   const [logs, setLogs] = useState<any[]>([])
   const [logTotal, setLogTotal] = useState<number>(0)
   const [showAll, setShowAll] = useState(false)
   const [uptimeOffset, setUptimeOffset] = useState<number>(0)
+  const [startupFailed, setStartupFailed] = useState(false)
   const logTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const statsTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const uptimeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -315,6 +317,22 @@ export default function Dashboard() {
     getStats().then(setStats).catch(() => {})
     fetchLogs()
   }, [])
+
+  const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const wasStartingRef = useRef(false)
+
+  // 检测从"启动中"变为"已停止"（进程在初始化期间崩溃）
+  useEffect(() => {
+    if (status?.running && !status?.ready) {
+      wasStartingRef.current = true
+    } else if (wasStartingRef.current && !status?.running) {
+      // 从"启动中"变为"已停止"，说明进程崩溃了
+      setStartupFailed(true)
+      wasStartingRef.current = false
+    } else if (status?.ready) {
+      wasStartingRef.current = false
+    }
+  }, [status?.running, status?.ready])
 
   useEffect(() => {
     if (status?.running) {
@@ -344,6 +362,23 @@ export default function Dashboard() {
     }
   }, [status?.running, fetchLogs])
 
+  // 启动中状态时更频繁轮询状态（每2秒），就绪后停止轮询
+  useEffect(() => {
+    if (status?.running && !status?.ready) {
+      statusPollRef.current = setInterval(fetchStatus, 2000)
+    } else {
+      if (statusPollRef.current) {
+        clearInterval(statusPollRef.current)
+        statusPollRef.current = null
+      }
+    }
+    return () => {
+      if (statusPollRef.current) {
+        clearInterval(statusPollRef.current)
+      }
+    }
+  }, [status?.running, status?.ready, fetchStatus])
+
   useEffect(() => {
     if (status?.running && status?.uptime != null) {
       setUptimeOffset(0)
@@ -365,7 +400,13 @@ export default function Dashboard() {
   }, [status?.running, status?.uptime])
 
   const handleAction = async (action: () => Promise<void>) => {
-    await action()
+    setStartupFailed(false)
+    try {
+      await action()
+    } catch {
+      // start() 抛出异常时，startError 已在 store 中设置
+      setStartupFailed(true)
+    }
     await fetchStatus()
     setTimeout(fetchLogs, 1000)
   }
@@ -401,15 +442,49 @@ export default function Dashboard() {
           showIcon
           message="仪表盘显示服务运行状态和统计信息。启动服务会根据当前配置（.env 和 config.yaml）运行 Agent。"
         />
+        {status?.running && !status?.ready && (
+          <Alert
+            type="warning"
+            showIcon
+            icon={<LoadingOutlined />}
+            message="Agent 正在初始化中"
+            description={'正在加载向量数据库、MCP 工具服务等，请稍候...初始化完成后状态将自动变为"运行中"。'}
+          />
+        )}
+        {startupFailed && (
+          <Alert
+            type="error"
+            showIcon
+            message="启动失败"
+            description={startError || 'Agent 进程在初始化期间意外退出，请检查日志或配置后重试。'}
+            closable
+            onClose={() => setStartupFailed(false)}
+          />
+        )}
 
         <Card title="服务状态">
           <Row gutter={[16, 16]} align="middle">
             <Col span={6}>
               <Statistic
                 title="运行状态"
-                value={status?.running ? '运行中' : '已停止'}
-                prefix={status?.running ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />}
-                valueStyle={{ color: status?.running ? '#52c41a' : '#ff4d4f', fontSize: 20 }}
+                value={
+                  status?.running
+                    ? (status?.ready ? '运行中' : '启动中...')
+                    : '已停止'
+                }
+                prefix={
+                  status?.running
+                    ? (status?.ready
+                      ? <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                      : <LoadingOutlined style={{ color: '#faad14' }} />)
+                    : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                }
+                valueStyle={{
+                  color: status?.running
+                    ? (status?.ready ? '#52c41a' : '#faad14')
+                    : '#ff4d4f',
+                  fontSize: 20,
+                }}
               />
             </Col>
             <Col span={6}>
@@ -444,6 +519,7 @@ export default function Dashboard() {
                   icon={<PlayCircleOutlined />}
                   onClick={() => handleAction(start)}
                   disabled={status?.running}
+                  loading={status?.running && !status?.ready}
                 >
                   启动
                 </Button>
@@ -462,7 +538,7 @@ export default function Dashboard() {
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={() => handleAction(restart)}
-                  disabled={!status?.running}
+                  disabled={!status?.running || !status?.ready}
                 >
                   重启
                 </Button>
@@ -523,6 +599,11 @@ export default function Dashboard() {
                   <>
                     <div>服务未运行，点击上方"启动"按钮启动 Agent</div>
                     <div style={{ marginTop: 8, fontSize: 11 }}>日志文件: workspace/data/debug/agent.jsonl</div>
+                  </>
+                ) : !status?.ready ? (
+                  <>
+                    <div><LoadingOutlined style={{ marginRight: 8 }} />Agent 正在初始化，请等待...</div>
+                    <div style={{ marginTop: 8, fontSize: 11 }}>初始化包括：加载向量数据库、MCP 工具服务、微信登录等</div>
                   </>
                 ) : (
                   <>
