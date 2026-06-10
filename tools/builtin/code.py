@@ -36,6 +36,49 @@ DANGEROUS_ATTRS = {
     "rmdir", "renames", "kill",
 }
 
+# 拦截非工作区路径的文件删除/移动操作的关键词
+_FILE_DESTRUCTIVE_PATTERNS = [
+    "desktop", "桌面", "documents", "文档",
+    "downloads", "下载", "appdata",
+]
+
+
+def _check_path_outside_workspace(code: str) -> tuple[bool, str]:
+    """检查代码中是否包含对工作区外路径的破坏性操作（删除/移动/清空）。"""
+    code_lower = code.lower()
+    workspace_str = str(WORKSPACE_DIR).lower()
+
+    # 检查是否包含非工作区路径
+    has_external_path = False
+    for pattern in _FILE_DESTRUCTIVE_PATTERNS:
+        if pattern in code_lower:
+            has_external_path = True
+            break
+
+    # 检查 C:/ D:/ 等绝对路径但不在 workspace 下
+    import re
+    drive_paths = re.findall(r'[A-Za-z]:\\[^\s\'"]+', code)
+    for p in drive_paths:
+        if workspace_str not in p.lower().replace("/", "\\"):
+            has_external_path = True
+            break
+
+    if not has_external_path:
+        return True, ""
+
+    # 检查是否有破坏性操作模式
+    destructive_patterns = [
+        (r'open\s*\([^)]*[\'"][^)]*[\'"][^)]*[\,\s]*[\'"]w', "写入/清空非工作区文件"),
+        (r'\.write\s*\(', "写入非工作区文件"),
+        (r'os\.rename|pathlib.*rename|\.rename\s*\(', "移动/重命名非工作区文件"),
+        (r'shutil\.move|shutil\.copy', "移动/复制非工作区文件"),
+    ]
+    for pattern, desc in destructive_patterns:
+        if re.search(pattern, code):
+            return False, f"禁止{desc}，请使用 delete_file 工具删除文件"
+
+    return True, ""
+
 
 def _validate_code(code: str) -> tuple[bool, str]:
     try:
@@ -68,6 +111,10 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
     valid, msg = _validate_code(code)
     if not valid:
         return ToolResult(success=False, error=f"代码安全检查失败: {msg}")
+
+    path_valid, path_msg = _check_path_outside_workspace(code)
+    if not path_valid:
+        return ToolResult(success=False, error=f"代码安全检查失败: {path_msg}")
 
     script_path = WORKSPACE_DIR / "scripts" / f"run_{int(time.time())}.py"
     script_path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,7 +226,8 @@ ToolRegistry.register(
         description="执行 Python 代码并返回结果。支持 pandas/numpy/matplotlib/python-docx/Pillow/httpx 等。"
                     "代码在 workspace/.venv 中执行，可读取用户文件，图表保存到 workspace/output/。"
                     "如果代码执行失败，会返回错误信息，请根据错误修改代码后重新调用此工具。"
-                    "如果缺少某个包，先用 install_package 安装。",
+                    "如果缺少某个包，先用 install_package 安装。"
+                    "注意：删除文件请使用 delete_file 工具，不要用 Python 代码删除文件。",
         parameters={
             "code": {"type": "string", "description": "要执行的 Python 代码"},
         },

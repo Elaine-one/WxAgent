@@ -9,9 +9,9 @@ from tools.registry import ToolRegistry
 TOOL_META = ToolMeta(
     name="file",
     type=ToolType.BUILTIN,
-    description="文件操作工具集：读取、写入、搜索、发送文件",
+    description="文件操作工具集：读取、写入、删除、搜索、发送文件",
     version="1.0.0",
-    tags=["file", "io", "filesystem"],
+    tags=["file", "io", "filesystem", "删除", "文件操作"],
 )
 
 
@@ -121,6 +121,40 @@ def _write_file(path: str, content: str, state=None, user_id: str = "") -> ToolR
         )
 
 
+def _delete_file(path: str, state=None, user_id: str = "") -> ToolResult:
+    if not os.path.isfile(path):
+        return ToolResult(success=False, error=f"文件不存在: {path}")
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0
+    return ToolResult(
+        success=False,
+        error=f"确认删除文件？\n路径: {path}\n大小: {_format_size(size)}\n此操作不可恢复。",
+        requires_confirmation=True,
+        confirmation_detail={
+            "type": "delete_file",
+            "path": path,
+            "size": size,
+            "tool_name": "delete_file",
+            "tool_args": {"path": path},
+        },
+    )
+
+
+def _do_delete_file(path: str) -> ToolResult:
+    """实际执行文件删除（由 handle_confirm 节点在用户确认后调用）。"""
+    try:
+        os.remove(path)
+        return ToolResult(success=True, content=f"已删除: {path}")
+    except FileNotFoundError:
+        return ToolResult(success=False, error=f"文件不存在: {path}")
+    except PermissionError:
+        return ToolResult(success=False, error=f"没有权限删除: {path}")
+    except Exception as e:
+        return ToolResult(success=False, error=f"删除失败: {e}")
+
+
 ToolRegistry.register(
     ToolDef(
         name="read_file",
@@ -182,4 +216,16 @@ ToolRegistry.register(
         required=["path", "content"],
     ),
     _write_file,
+)
+
+ToolRegistry.register(
+    ToolDef(
+        name="delete_file",
+        description="删除本地文件。删除操作需要用户确认(Y/N)后才会执行，不可恢复。",
+        parameters={
+            "path": {"type": "string", "description": "要删除的文件的绝对路径"},
+        },
+        required=["path"],
+    ),
+    _delete_file,
 )

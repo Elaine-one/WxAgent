@@ -13,9 +13,9 @@ logger = logging.getLogger("wxagent.tools.system")
 TOOL_META = ToolMeta(
     name="system",
     type=ToolType.BUILTIN,
-    description="系统操作工具集：Shell命令、剪贴板、窗口感知",
+    description="系统操作工具集：Shell命令、文件操作、剪贴板、窗口感知",
     version="1.0.0",
-    tags=["system", "shell", "clipboard"],
+    tags=["system", "shell", "clipboard", "文件操作", "删除", "命令行"],
 )
 
 
@@ -165,7 +165,8 @@ def _get_active_window(state=None, user_id: str = "") -> ToolResult:
 ToolRegistry.register(
     ToolDef(
         name="run_shell",
-        description="执行系统命令并返回输出。危险命令需要用户确认。"
+        description="执行系统 Shell 命令并返回输出。可用于文件操作（删除/移动/复制文件）、系统管理等。"
+                    "危险命令（如删除文件、修改系统配置）需要用户确认(Y/N)。"
                     "支持三级风险分类：SAFE/CAUTION/DANGEROUS。",
         parameters={
             "command": {"type": "string", "description": "要执行的 shell 命令"},
