@@ -263,6 +263,17 @@ python main.py --dry-run
 
 ### 5. Web 管理面板（可选）
 
+首次使用需先构建前端：
+
+```bash
+cd web/frontend
+npm install
+npm run build
+cd ../..
+```
+
+然后启动：
+
 ```bash
 python web/run_web.py
 ```

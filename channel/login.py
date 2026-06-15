@@ -19,7 +19,7 @@ def start_qr_login() -> tuple[str, str]:
     resp = httpx.post(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
     resp.raise_for_status()
     data = resp.json()
-    logger.info("qrcode_generated", extra={"msg": "登录二维码已生成，等待扫码"})
+    logger.info("qrcode_generated", extra={"detail": "登录二维码已生成，等待扫码"})
     return data["qrcode_img_content"], data["qrcode"]
 
 
@@ -51,7 +51,7 @@ def wait_for_login(qrcode: str, timeout_s: int = 480) -> LoginResult:
         elif status == "scaned":
             if not scanned_printed:
                 print("\n正在验证...")
-                logger.info("qrcode_scanned", extra={"msg": "二维码已扫描，正在验证"})
+                logger.info("qrcode_scanned", extra={"detail": "二维码已扫描，正在验证"})
                 scanned_printed = True
             time.sleep(1)
         elif status == "scaned_but_redirect":
@@ -62,7 +62,7 @@ def wait_for_login(qrcode: str, timeout_s: int = 480) -> LoginResult:
             bot_token = status_resp.get("bot_token", "")
             base_url = status_resp.get("baseurl", FIXED_AUTH_URL)
             print(f"\n已连接！")
-            logger.info("login_confirmed", extra={"msg": "微信登录成功，已连接", "user_id": status_resp.get("ilink_user_id", "")})
+            logger.info("login_confirmed", extra={"detail": "微信登录成功，已连接", "user_id": status_resp.get("ilink_user_id", "")})
             return LoginResult(
                 bot_token=bot_token,
                 bot_id=status_resp["ilink_bot_id"],
@@ -71,7 +71,7 @@ def wait_for_login(qrcode: str, timeout_s: int = 480) -> LoginResult:
             )
         elif status == "expired":
             print("\n二维码已过期，正在刷新...")
-            logger.info("qrcode_expired", extra={"msg": "二维码已过期，正在刷新"})
+            logger.info("qrcode_expired", extra={"detail": "二维码已过期，正在刷新"})
             qrcode_url, qrcode = start_qr_login()
             _display_qr_hint(qrcode_url)
             scanned_printed = False
@@ -82,7 +82,7 @@ def wait_for_login(qrcode: str, timeout_s: int = 480) -> LoginResult:
                 bot_token = verified.get("bot_token", "")
                 base_url = verified.get("baseurl", FIXED_AUTH_URL)
                 print(f"\n已连接！")
-                logger.info("login_confirmed", extra={"msg": "微信登录成功（验证码确认）", "user_id": verified.get("ilink_user_id", "")})
+                logger.info("login_confirmed", extra={"detail": "微信登录成功（验证码确认）", "user_id": verified.get("ilink_user_id", "")})
                 return LoginResult(
                     bot_token=bot_token,
                     bot_id=verified["ilink_bot_id"],
@@ -91,24 +91,24 @@ def wait_for_login(qrcode: str, timeout_s: int = 480) -> LoginResult:
                 )
             elif verified.get("status") == "need_verifycode":
                 print("验证码错误，请重试")
-                logger.warning("verify_code_failed", extra={"msg": "验证码错误"})
+                logger.warning("verify_code_failed", extra={"detail": "验证码错误"})
                 continue
             else:
                 continue
         elif status == "verify_code_blocked":
             print("\n多次输入错误，正在刷新二维码...")
-            logger.warning("verify_code_blocked", extra={"msg": "多次验证码错误，刷新二维码"})
+            logger.warning("verify_code_blocked", extra={"detail": "多次验证码错误，刷新二维码"})
             qrcode_url, qrcode = start_qr_login()
             _display_qr_hint(qrcode_url)
             scanned_printed = False
         elif status == "binded_redirect":
             print("\n已连接过此机器，无需重复连接。")
-            logger.info("already_binded", extra={"msg": "已连接过此机器"})
+            logger.info("already_binded", extra={"detail": "已连接过此机器"})
             raise SystemExit(0)
         else:
             time.sleep(1)
 
-    logger.error("login_timeout", extra={"msg": "登录超时"})
+    logger.error("login_timeout", extra={"detail": "登录超时"})
     raise RuntimeError("登录超时，请重试")
 
 
