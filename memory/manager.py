@@ -45,7 +45,7 @@ class MemoryManager:
                 existing = self.long_term.retrieve_facts(user_id, key, top_k=3)
                 ok, msg = resolve_fact_conflict(user_id, key, value, existing, strategy="overwrite")
                 if not ok:
-                    logger.info("fact_conflict", extra={"user_id": user_id, "key": key, "msg": msg})
+                    logger.info("fact_conflict", extra={"user_id": user_id, "key": key, "detail": msg})
             except Exception:
                 pass
             self.long_term.store_fact(user_id, key, value)
