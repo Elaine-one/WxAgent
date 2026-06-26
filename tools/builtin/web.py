@@ -1,7 +1,7 @@
-import httpx
 from bs4 import BeautifulSoup
 
 import config
+from network.async_client import get_sync
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
 
@@ -17,7 +17,7 @@ TOOL_META = ToolMeta(
 
 def _web_fetch(url: str, state=None, user_id: str = "") -> ToolResult:
     try:
-        resp = httpx.get(url, timeout=config.ADV_WEB_FETCH_TIMEOUT, follow_redirects=True,
+        resp = get_sync(url, timeout=config.ADV_WEB_FETCH_TIMEOUT, follow_redirects=True,
                         headers={"User-Agent": "Mozilla/5.0"})
         resp.raise_for_status()
         try:
@@ -36,12 +36,8 @@ def _web_fetch(url: str, state=None, user_id: str = "") -> ToolResult:
             success=True, content=text[:config.ADV_WEB_FETCH_MAX_CHARS],
             display=f"已获取 {url[:60]} ({len(text)} 字符)",
         )
-    except httpx.TimeoutException as e:
-        return ToolResult(success=False, error=f"抓取超时: {e}")
-    except httpx.HTTPStatusError as e:
-        return ToolResult(success=False, error=f"抓取失败 HTTP {e.response.status_code}: {e}")
-    except httpx.RequestError as e:
-        return ToolResult(success=False, error=f"抓取网络错误: {e}")
+    except Exception as e:
+        return ToolResult(success=False, error=f"抓取失败: {e}")
 
 
 ToolRegistry.register(

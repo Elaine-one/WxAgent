@@ -1,8 +1,7 @@
 import hashlib
 import logging
 
-import httpx
-
+from network.async_client import get_sync
 from tasks.scheduler import create_scheduler
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
@@ -100,7 +99,7 @@ def _monitor_url(url: str, interval_minutes: int = 360,
 
 def _fetch_url_hash(url: str) -> str:
     try:
-        resp = httpx.get(url, timeout=30, follow_redirects=True)
+        resp = get_sync(url, timeout=30, follow_redirects=True)
         return hashlib.md5(resp.text.encode()).hexdigest()
     except Exception:
         return ""

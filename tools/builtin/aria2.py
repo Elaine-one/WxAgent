@@ -1,6 +1,7 @@
-import httpx
+import httpx  # ConnectError
 
 import config
+from network.async_client import post_sync
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
 
@@ -25,7 +26,7 @@ def _aria2_add(url: str, output_dir: str | None = None,
         params.append(opts)
 
     try:
-        resp = httpx.post(_ARIA2_RPC_URL, json={
+        resp = post_sync(_ARIA2_RPC_URL, json={
             "jsonrpc": "2.0",
             "id": "wxagent",
             "method": "aria2.addUri",
@@ -49,7 +50,7 @@ def _aria2_add(url: str, output_dir: str | None = None,
 
 def _aria2_status(gid: str, state=None, user_id: str = "") -> ToolResult:
     try:
-        resp = httpx.post(_ARIA2_RPC_URL, json={
+        resp = post_sync(_ARIA2_RPC_URL, json={
             "jsonrpc": "2.0",
             "id": "wxagent",
             "method": "aria2.tellStatus",

@@ -1,7 +1,7 @@
 import json
 import secrets
 
-import httpx
+from network.async_client import post_sync
 
 from channel.client import (
     DEFAULT_API_TIMEOUT_S, ITEM_TYPE_TEXT, _build_base_info, _build_headers,
@@ -28,6 +28,6 @@ def send_message(state, to_user: str, text: str) -> str:
         "base_info": _build_base_info(),
     })
     h = _build_headers(token=state.token)
-    resp = httpx.post(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
+    resp = post_sync(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
     resp.raise_for_status()
     return client_id

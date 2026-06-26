@@ -249,7 +249,8 @@ def _dispatch_message(uid, msg, state, model, use_langgraph: bool, dispatcher, c
                 print(f"  → 已回复 ({len(reply)} chars)")
     except Exception as e:
         print(f"  ✗ 回复失败: {e}")
-        traceback.print_exc()
+        import logging
+        logging.getLogger("wxagent.dispatcher").exception("dispatch failed user=%s", uid)
         try:
             channel.send_message(state, uid, f"抱歉，处理出错：{e}")
         except Exception:

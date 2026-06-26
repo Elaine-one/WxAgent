@@ -477,3 +477,4 @@ def get_system_prompt() -> str:
     tool_section = _build_tool_section()
     return _SYSTEM_PROMPT_BASE + _STATIC_PROMPT + "\n" + tool_section + _TOOL_RULES
 
+

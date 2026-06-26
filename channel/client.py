@@ -4,8 +4,7 @@ import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 
-import httpx
-
+from network.async_client import get_sync
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 import config
@@ -112,7 +111,7 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
         if media_ref and media_ref.get("encrypt_query_param"):
             eqp = media_ref["encrypt_query_param"]
             download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
-            resp = httpx.get(download_url, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
+            resp = get_sync(download_url, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             ciphertext = resp.content
             aes_key_b64 = media_ref.get("aes_key", "")
@@ -134,7 +133,7 @@ def download_image_as_base64(url: str, session: SessionState | None = None,
         headers = {}
         if session and "cdn.weixin" in url:
             headers = _build_headers(token=session.token)
-        resp = httpx.get(url, headers=headers, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
+        resp = get_sync(url, headers=headers, timeout=config.ADV_IMAGE_DOWNLOAD_TIMEOUT, follow_redirects=True)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "image/jpeg")
         if "/" in content_type:
@@ -192,7 +191,7 @@ def download_cdn_file(url: str, session: SessionState | None = None,
         if media_ref and media_ref.get("encrypt_query_param"):
             eqp = media_ref["encrypt_query_param"]
             download_url = f"{CDN_BASE_URL}/download?encrypted_query_param={eqp}"
-            resp = httpx.get(download_url, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
+            resp = get_sync(download_url, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             ciphertext = resp.content
             aes_key_b64 = media_ref.get("aes_key", "")
@@ -204,7 +203,7 @@ def download_cdn_file(url: str, session: SessionState | None = None,
             headers = {}
             if session and "cdn.weixin" in url:
                 headers = _build_headers(token=session.token)
-            resp = httpx.get(url, headers=headers, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
+            resp = get_sync(url, headers=headers, timeout=config.ADV_CDN_DOWNLOAD_TIMEOUT, follow_redirects=True)
             resp.raise_for_status()
             plaintext = resp.content
         else:
