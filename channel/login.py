@@ -3,11 +3,12 @@ import time
 import logging
 from typing import Optional
 
-import httpx
+import httpx  # ReadTimeout
 
 from channel.client import (
     BOT_TYPE, DEFAULT_API_TIMEOUT_S, FIXED_AUTH_URL, LoginResult, _build_headers,
 )
+from network.async_client import get_sync, post_sync
 
 logger = logging.getLogger("wxagent.login")
 
@@ -16,7 +17,7 @@ def start_qr_login() -> tuple[str, str]:
     body = json.dumps({"local_token_list": []})
     url = f"{FIXED_AUTH_URL}/ilink/bot/get_bot_qrcode?bot_type={BOT_TYPE}"
     h = _build_headers()
-    resp = httpx.post(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
+    resp = post_sync(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
     resp.raise_for_status()
     data = resp.json()
     logger.info("qrcode_generated", extra={"detail": "登录二维码已生成，等待扫码"})
@@ -30,7 +31,7 @@ def poll_qr_status(qrcode: str, verify_code: Optional[str] = None) -> dict:
     url = f"{FIXED_AUTH_URL}/{ep}"
     h = _build_headers()
     try:
-        resp = httpx.get(url, headers=h, timeout=40)
+        resp = get_sync(url, headers=h, timeout=40)
         resp.raise_for_status()
         return resp.json()
     except httpx.ReadTimeout:

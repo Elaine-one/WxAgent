@@ -10,8 +10,7 @@ import os
 import asyncio
 import time
 
-import httpx
-
+from network.async_client import async_post, async_request
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
 
@@ -43,11 +42,6 @@ _domain_cache: str = ""
 
 # ── Token 管理 ────────────────────────────────────────────────
 
-def _get_http_client() -> httpx.AsyncClient:
-    """创建新的 HTTP 客户端。每次创建新实例，避免绑定到已关闭的事件循环。"""
-    return httpx.AsyncClient(timeout=30.0)
-
-
 async def _get_tenant_token() -> str:
     """获取 tenant_access_token，带缓存（提前 5 分钟刷新）和并发锁保护。"""
     global _token_cache
@@ -57,12 +51,11 @@ async def _get_tenant_token() -> str:
         # 双重检查：等待锁后再次确认
         if _token_cache["token"] and time.time() < _token_cache["expires_at"]:
             return _token_cache["token"]
-        async with _get_http_client() as client:
-            resp = await client.post(
-                f"{FEISHU_BASE_URL}/open-apis/auth/v3/tenant_access_token/internal",
-                json={"app_id": _app_id, "app_secret": _app_secret},
-            )
-            data = resp.json()
+        resp = await async_post(
+            f"{FEISHU_BASE_URL}/open-apis/auth/v3/tenant_access_token/internal",
+            json={"app_id": _app_id, "app_secret": _app_secret},
+        )
+        data = resp.json()
     token = data.get("tenant_access_token", "")
     if not token:
         code = data.get("code", -1)
@@ -82,10 +75,9 @@ async def _request(method: str, path: str, **kwargs) -> dict:
     headers["Authorization"] = f"Bearer {token}"
     if method.upper() != "DELETE" and "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
-    async with _get_http_client() as client:
-        resp = await client.request(
-            method, f"{FEISHU_BASE_URL}{path}", headers=headers, **kwargs
-        )
+    resp = await async_request(
+        method, f"{FEISHU_BASE_URL}{path}", headers=headers, **kwargs
+    )
     return resp.json()
 
 
@@ -913,14 +905,14 @@ async def _feishu_upload_file(
         name = file_name or p.name
         token = await _get_tenant_token()
         headers = {"Authorization": f"Bearer {token}"}
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            with open(p, "rb") as f:
-                resp = await client.post(
-                    f"{FEISHU_BASE_URL}/open-apis/drive/v1/medias/upload_all",
-                    headers=headers,
-                    data={"parent_node": parent_node, "file_name": name},
-                    files={"file": (name, f)},
-                )
+        with open(p, "rb") as f:
+            resp = await async_post(
+                f"{FEISHU_BASE_URL}/open-apis/drive/v1/medias/upload_all",
+                headers=headers,
+                data={"parent_node": parent_node, "file_name": name},
+                files={"file": (name, f)},
+                timeout=120.0,
+            )
         data = resp.json()
         if data.get("code") != 0:
             return ToolResult(

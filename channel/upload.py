@@ -5,7 +5,9 @@ import os
 import secrets
 from urllib.parse import urlparse, parse_qs
 
-import httpx
+import httpx  # CDN 上传用独立连接
+
+from network.async_client import post_sync
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from channel.client import (
@@ -76,7 +78,7 @@ def _get_upload_url(state: SessionState, to_user: str, file_path: str,
         "base_info": _build_base_info(),
     })
     h = _build_headers(token=state.token)
-    resp = httpx.post(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
+    resp = post_sync(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
     resp.raise_for_status()
     data = resp.json()
 
@@ -162,7 +164,7 @@ def _send_media_item(state: SessionState, to_user: str, item: dict,
         })
         h = _build_headers(token=state.token)
         url = f"{state.base_url}/ilink/bot/sendmessage"
-        resp = httpx.post(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
+        resp = post_sync(url, content=body, headers=h, timeout=DEFAULT_API_TIMEOUT_S)
         resp.raise_for_status()
         if resp.text.strip():
             try:

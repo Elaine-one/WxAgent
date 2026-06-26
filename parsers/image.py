@@ -7,14 +7,14 @@ def ocr_image(path: str, profile: str = "basic") -> str:
 def _ocr_basic(path: str) -> str:
     try:
         import base64
-        import httpx
         from pathlib import Path
         from config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+        from network.async_client import post_sync
 
         img_data = Path(path).read_bytes()
         b64 = base64.b64encode(img_data).decode()
 
-        resp = httpx.post(
+        resp = post_sync(
             f"{LLM_BASE_URL}/chat/completions",
             headers={"Authorization": f"Bearer {LLM_API_KEY}"},
             json={

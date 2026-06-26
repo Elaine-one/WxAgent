@@ -4,10 +4,9 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
-
 import config
 from config import WORKSPACE_DIR
+from network.async_client import stream_sync
 from tasks.manager import get_task_manager
 from tools.base import ToolDef, ToolResult, ToolMeta, ToolType
 from tools.registry import ToolRegistry
@@ -82,8 +81,9 @@ def _http_download(url: str, filename: str | None = None,
 
     save_path = str(Path(output_dir) / filename)
     try:
-        with httpx.stream("GET", real_url, timeout=config.ADV_HTTP_DOWNLOAD_TIMEOUT, follow_redirects=True,
-                          headers={"User-Agent": "Mozilla/5.0"}) as resp:
+        with stream_sync("GET", real_url, timeout=config.ADV_HTTP_DOWNLOAD_TIMEOUT,
+                         follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"}) as resp:
             resp.raise_for_status()
             cd = resp.headers.get("content-disposition", "")
             if cd and "filename=" in cd and filename == "download":

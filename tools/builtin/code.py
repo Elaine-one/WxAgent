@@ -122,6 +122,17 @@ def _run_python(code: str, state=None, user_id: str = "") -> ToolResult:
     lines = code.split("\n")
     indented = "\n".join("    " + line for line in lines)
     wrapped = (
+        "import builtins\n"
+        "_original_import = builtins.__import__\n"
+        "def _guarded_import(name, *args, **kwargs):\n"
+        "    if name in ('httpx', 'requests', 'urllib3', 'http.client'):\n"
+        "        raise ImportError(\n"
+        "            f'\\u7981\\u6b62\\u76f4\\u63a5\\u4f7f\\u7528 {name}\\u3002'\n"
+        "            f'\\u7f51\\u7edc\\u8bf7\\u6c42\\u8bf7\\u4f7f\\u7528 web_fetch / http_download \\u5de5\\u5177\\uff0c'\n"
+        "            f'\\u5982\\u9700\\u5728\\u4ee3\\u7801\\u4e2d\\u8c03\\u7528 API\\uff0c\\u8bf7\\u4f7f\\u7528 install_package \\u5148\\u5b89\\u88c5\\u5bf9\\u5e94\\u5305\\u3002'\n"
+        "        )\n"
+        "    return _original_import(name, *args, **kwargs)\n"
+        "builtins.__import__ = _guarded_import\n"
         "import sys, json\n"
         "sys.stdout.reconfigure(encoding='utf-8')\n"
         "try:\n"
@@ -223,10 +234,11 @@ ToolRegistry.register(
 ToolRegistry.register(
     ToolDef(
         name="run_python",
-        description="执行 Python 代码并返回结果。支持 pandas/numpy/matplotlib/python-docx/Pillow/httpx 等。"
+        description="执行 Python 代码并返回结果。支持 pandas/numpy/matplotlib/python-docx/Pillow 等。"
                     "代码在 workspace/.venv 中执行，可读取用户文件，图表保存到 workspace/output/。"
                     "如果代码执行失败，会返回错误信息，请根据错误修改代码后重新调用此工具。"
                     "如果缺少某个包，先用 install_package 安装。"
+                    "注意：不要在此工具中发起 HTTP 请求，网络操作请使用 web_fetch/http_download 等专用工具。"
                     "注意：删除文件请使用 delete_file 工具，不要用 Python 代码删除文件。",
         parameters={
             "code": {"type": "string", "description": "要执行的 Python 代码"},

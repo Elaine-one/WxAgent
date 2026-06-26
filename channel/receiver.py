@@ -2,7 +2,9 @@ import json
 import logging
 from typing import Optional
 
-import httpx
+import httpx  # ReadTimeout
+
+from network.async_client import post_sync
 
 from channel.client import (
     DEFAULT_LONGPOLL_TIMEOUT_MS, ITEM_TYPE_TEXT, ITEM_TYPE_VOICE,
@@ -36,7 +38,7 @@ def get_updates(state, timeout_ms: int = DEFAULT_LONGPOLL_TIMEOUT_MS) -> list[In
     h = _build_headers(token=state.token)
 
     try:
-        resp = httpx.post(url, content=body, headers=h, timeout=(timeout_ms / 1000) + 5)
+        resp = post_sync(url, content=body, headers=h, timeout=(timeout_ms / 1000) + 5)
         resp.raise_for_status()
         data = resp.json()
     except httpx.ReadTimeout:
